@@ -1,0 +1,8 @@
+node_modules/
+uploads/
+logs/
+.wwebjs_auth/
+.wwebjs_cache/
+.env
+user-map.json
+whatsapp-allowed.json
