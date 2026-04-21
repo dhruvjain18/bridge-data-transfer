@@ -172,25 +172,47 @@ let whatsappClient = null;
 let whatsappReady = false;
 let whatsappQR = null;
 
-try {
-    whatsappClient = new Client({
-        authStrategy: new LocalAuth(),
-        puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] }
-    });
-    whatsappClient.on('qr', async (qr) => {
-        try {
-            whatsappQR = await qrcode.toDataURL(qr, { margin: 2, scale: 8 });
-            log('INFO', 'WhatsApp QR generated');
-        } catch (e) { log('ERROR', `QR generation error: ${e.message}`); }
-    });
-    whatsappClient.on('ready', () => { log('INFO', 'WhatsApp connected and ready'); whatsappReady = true; whatsappQR = null; });
-    whatsappClient.on('authenticated', () => { log('INFO', 'WhatsApp authenticated'); });
-    whatsappClient.on('auth_failure', () => { log('ERROR', 'WhatsApp auth failed'); whatsappReady = false; });
-    whatsappClient.on('disconnected', () => { log('WARN', 'WhatsApp disconnected'); whatsappReady = false; });
-    whatsappClient.initialize();
-} catch (e) {
-    log('ERROR', `WhatsApp client could not start: ${e.message}`);
+// Timeout wrapper to prevent indefinite hangs
+function withTimeout(promise, ms, label = 'Operation') {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms))
+    ]);
 }
+
+function initWhatsApp() {
+    try {
+        whatsappClient = new Client({
+            authStrategy: new LocalAuth(),
+            puppeteer: {
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+                timeout: 60000
+            }
+        });
+        whatsappClient.on('qr', async (qr) => {
+            try {
+                whatsappQR = await qrcode.toDataURL(qr, { margin: 2, scale: 8 });
+                log('INFO', 'WhatsApp QR generated');
+            } catch (e) { log('ERROR', `QR generation error: ${e.message}`); }
+        });
+        whatsappClient.on('ready', () => { log('INFO', 'WhatsApp connected and ready'); whatsappReady = true; whatsappQR = null; });
+        whatsappClient.on('authenticated', () => { log('INFO', 'WhatsApp authenticated'); });
+        whatsappClient.on('auth_failure', () => { log('ERROR', 'WhatsApp auth failed'); whatsappReady = false; });
+        whatsappClient.on('disconnected', (reason) => {
+            log('WARN', `WhatsApp disconnected: ${reason}`);
+            whatsappReady = false;
+            // Auto-reconnect after 5 seconds
+            setTimeout(() => {
+                log('INFO', 'Attempting WhatsApp reconnection...');
+                initWhatsApp();
+            }, 5000);
+        });
+        whatsappClient.initialize();
+    } catch (e) {
+        log('ERROR', `WhatsApp client could not start: ${e.message}`);
+    }
+}
+initWhatsApp();
 
 // ==============================
 // HELPERS
@@ -227,15 +249,31 @@ async function sendTelegram(chatId, text, files) {
 
 async function sendWhatsApp(chatId, text, files) {
     const results = { textSent: false, filesSent: 0, errors: [] };
+
+    // Live health check — verify session is truly alive before sending
+    try {
+        const state = await withTimeout(whatsappClient.getState(), 10000, 'WhatsApp state check');
+        if (state !== 'CONNECTED') {
+            results.errors.push(`WhatsApp session not connected (state: ${state}). Try refreshing.`);
+            return results;
+        }
+    } catch (e) {
+        results.errors.push(`WhatsApp health check failed: ${e.message}`);
+        whatsappReady = false;
+        return results;
+    }
+
     if (text) {
-        try { await whatsappClient.sendMessage(chatId, text); results.textSent = true; }
-        catch (e) { results.errors.push(`Text: ${e.message}`); }
+        try {
+            await withTimeout(whatsappClient.sendMessage(chatId, text), 30000, 'WhatsApp text send');
+            results.textSent = true;
+        } catch (e) { results.errors.push(`Text: ${e.message}`); }
     }
     for (const file of files) {
         try {
             const media = MessageMedia.fromFilePath(path.resolve(file.path));
             media.filename = file.originalname;
-            await whatsappClient.sendMessage(chatId, media);
+            await withTimeout(whatsappClient.sendMessage(chatId, media), 60000, 'WhatsApp file send');
             results.filesSent++;
         } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
     }
@@ -484,7 +522,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent to ${resolved.length} recipient(s)!`, filesSent: totalSent });
 
         } else if (channel === 'whatsapp') {
-            if (!whatsappReady) { cleanupFiles(files); return res.status(503).json({ error: 'WhatsApp not connected. Scan the QR code first.' }); }
+            if (!whatsappReady || !whatsappClient) { cleanupFiles(files); return res.status(503).json({ error: 'WhatsApp not connected. Scan the QR code first.' }); }
 
             // Verify user is whitelisted
             const verifyPhone = req.body.waVerifiedPhone || '';
@@ -514,14 +552,27 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             }
 
             let totalSent = 0;
+            let allErrors = [];
             for (const t of resolved) {
                 const r = await sendWhatsApp(t.chatId, textMessage, files);
                 totalSent += r.filesSent;
-                if (r.errors.length) log('ERROR', `WhatsApp send errors for ${t.label}`, { errors: r.errors });
+                if (r.textSent) totalSent++;
+                if (r.errors.length) {
+                    log('ERROR', `WhatsApp send errors for ${t.label}`, { errors: r.errors });
+                    allErrors.push(...r.errors);
+                }
             }
             cleanupFiles(files);
+
+            // If nothing was sent at all, return an error
+            if (totalSent === 0 && allErrors.length > 0) {
+                log('ERROR', 'WhatsApp delivery fully failed', { errors: allErrors });
+                return res.status(502).json({ error: `WhatsApp delivery failed: ${allErrors[0]}` });
+            }
+
             log('INFO', `WhatsApp delivery complete`, { recipients: resolved.length, filesSent: totalSent });
-            return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent via WhatsApp!`, filesSent: totalSent });
+            const warnSuffix = allErrors.length > 0 ? ` (${allErrors.length} warning(s))` : '';
+            return res.json({ success: true, message: `${totalSent} item(s) sent via WhatsApp!${warnSuffix}`, filesSent: totalSent });
         }
 
     } catch (error) {
