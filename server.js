@@ -81,8 +81,24 @@ const uploadLimiter = rateLimit({
     }
 });
 
-// Apply general limiter to all API routes
-app.use('/api/', apiLimiter);
+// Brute-force protection on WhatsApp verification (5 attempts per 15 min)
+const verifyLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many verification attempts. Try again in 15 minutes.' },
+    handler: (req, res, next, options) => {
+        log('WARN', `WhatsApp verify brute-force blocked`, { ip: req.ip });
+        res.status(429).json(options.message);
+    }
+});
+
+// Exclude high-frequency polling endpoints from rate limiting
+app.use('/api/', (req, res, next) => {
+    if (req.path === '/api/whatsapp/status') return next();
+    apiLimiter(req, res, next);
+});
 
 // ==============================
 // MULTER & MIDDLEWARE
@@ -107,29 +123,71 @@ function saveUserMap() { fs.writeFileSync(USER_MAP_FILE, JSON.stringify(userMap,
 
 const scheduledJobs = [];
 
-// WhatsApp phone whitelist
+// WhatsApp phone whitelist — MANDATORY for security
 const WA_ALLOWED_FILE = path.join(__dirname, 'whatsapp-allowed.json');
 let waAllowedNumbers = [];
 function loadWaAllowed() {
     try {
         if (fs.existsSync(WA_ALLOWED_FILE)) {
             waAllowedNumbers = JSON.parse(fs.readFileSync(WA_ALLOWED_FILE, 'utf-8'));
-            // Normalize: strip +, spaces, dashes
-            waAllowedNumbers = waAllowedNumbers.map(n => String(n).replace(/[^\d]/g, ''));
+            waAllowedNumbers = waAllowedNumbers.map(n => String(n).replace(/[^\d]/g, '')).filter(Boolean);
             log('INFO', `WhatsApp whitelist loaded: ${waAllowedNumbers.length} number(s) authorized`);
         } else {
-            log('WARN', 'whatsapp-allowed.json not found — WhatsApp is open to all users');
+            waAllowedNumbers = [];
+            log('WARN', 'whatsapp-allowed.json not found — WhatsApp is LOCKED (no numbers authorized)');
         }
     } catch (e) {
         log('ERROR', `Failed to load WhatsApp whitelist: ${e.message}`);
+        waAllowedNumbers = [];
     }
 }
 loadWaAllowed();
 
 function isWaAllowed(phone) {
-    if (waAllowedNumbers.length === 0) return true; // No whitelist = open access
+    if (waAllowedNumbers.length === 0) return false; // No whitelist = BLOCKED
     const normalized = String(phone).replace(/[^\d]/g, '');
     return waAllowedNumbers.includes(normalized);
+}
+
+// Per-user daily message tracking
+const waDailyUsage = {}; // { '918824707387': { count: 5, date: '2026-04-21' } }
+const WA_DAILY_LIMIT = 50;
+
+function checkDailyLimit(phone) {
+    const normalized = String(phone).replace(/[^\d]/g, '');
+    const today = new Date().toISOString().split('T')[0];
+    if (!waDailyUsage[normalized] || waDailyUsage[normalized].date !== today) {
+        waDailyUsage[normalized] = { count: 0, date: today };
+    }
+    return waDailyUsage[normalized].count < WA_DAILY_LIMIT;
+}
+
+function incrementDailyUsage(phone) {
+    const normalized = String(phone).replace(/[^\d]/g, '');
+    const today = new Date().toISOString().split('T')[0];
+    if (!waDailyUsage[normalized] || waDailyUsage[normalized].date !== today) {
+        waDailyUsage[normalized] = { count: 0, date: today };
+    }
+    waDailyUsage[normalized].count++;
+}
+
+// Verified session tokens (IP + phone must match)
+const waVerifiedSessions = {}; // { 'ip_address': { phone: '918824707387', expiresAt: timestamp } }
+const WA_SESSION_TTL = 2 * 60 * 60 * 1000; // 2 hours
+
+function isSessionVerified(ip) {
+    const session = waVerifiedSessions[ip];
+    if (!session) return false;
+    if (Date.now() > session.expiresAt) {
+        delete waVerifiedSessions[ip];
+        return false;
+    }
+    return true;
+}
+
+function getVerifiedPhone(ip) {
+    const session = waVerifiedSessions[ip];
+    return session ? session.phone : null;
 }
 
 // ==============================
@@ -139,12 +197,22 @@ const telegramToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 let telegramBot = null;
 
 if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
-    telegramBot = new TelegramBot(telegramToken, { polling: true });
+    telegramBot = new TelegramBot(telegramToken, { polling: { params: { timeout: 30 }, interval: 2000 } });
     telegramBot.getMe().then((info) => {
         log('INFO', `Telegram Bot connected: @${info.username}`);
     }).catch((err) => {
         log('ERROR', `Telegram Bot Token invalid: ${err.message}`);
         telegramBot = null;
+    });
+
+    // Suppress polling conflict errors (happens when Railway spins up a new container
+    // before the old one fully shuts down)
+    telegramBot.on('polling_error', (err) => {
+        if (err?.message?.includes('409 Conflict')) {
+            log('WARN', 'Telegram polling conflict detected (another instance may be running). Will retry...');
+        } else {
+            log('ERROR', `Telegram polling error: ${err.message}`);
+        }
     });
 
     telegramBot.onText(/\/start/, (msg) => {
@@ -180,34 +248,65 @@ function withTimeout(promise, ms, label = 'Operation') {
     ]);
 }
 
+// Clean stale Chromium locks from previous crashed sessions
+function cleanStaleLocks() {
+    const sessionDir = path.join(__dirname, '.wwebjs_auth', 'session');
+    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+    lockFiles.forEach(f => {
+        const p = path.join(sessionDir, f);
+        try { if (fs.existsSync(p)) { fs.unlinkSync(p); log('INFO', `Cleaned stale lock: ${f}`); } } catch (e) {}
+    });
+}
+
 function initWhatsApp() {
+    cleanStaleLocks();
     try {
         whatsappClient = new Client({
             authStrategy: new LocalAuth(),
             puppeteer: {
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-                timeout: 60000
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-extensions',
+                    '--disable-software-rasterizer',
+                    '--single-process',
+                    '--no-zygote'
+                ],
+                timeout: 90000
             }
         });
         whatsappClient.on('qr', async (qr) => {
             try {
                 whatsappQR = await qrcode.toDataURL(qr, { margin: 2, scale: 8 });
-                log('INFO', 'WhatsApp QR generated');
+                log('INFO', 'WhatsApp QR generated — waiting for scan');
             } catch (e) { log('ERROR', `QR generation error: ${e.message}`); }
         });
-        whatsappClient.on('ready', () => { log('INFO', 'WhatsApp connected and ready'); whatsappReady = true; whatsappQR = null; });
+        whatsappClient.on('ready', () => {
+            log('INFO', 'WhatsApp connected and ready');
+            whatsappReady = true;
+            whatsappQR = null;
+        });
         whatsappClient.on('authenticated', () => { log('INFO', 'WhatsApp authenticated'); });
-        whatsappClient.on('auth_failure', () => { log('ERROR', 'WhatsApp auth failed'); whatsappReady = false; });
+        whatsappClient.on('auth_failure', (msg) => {
+            log('ERROR', `WhatsApp auth failed: ${msg}`);
+            whatsappReady = false;
+            whatsappQR = null;
+        });
         whatsappClient.on('disconnected', (reason) => {
             log('WARN', `WhatsApp disconnected: ${reason}`);
             whatsappReady = false;
-            // Auto-reconnect after 5 seconds
+            whatsappQR = null;
             setTimeout(() => {
                 log('INFO', 'Attempting WhatsApp reconnection...');
                 initWhatsApp();
             }, 5000);
         });
-        whatsappClient.initialize();
+        whatsappClient.initialize().catch(err => {
+            log('ERROR', `WhatsApp initialize failed: ${err.message}`);
+        });
     } catch (e) {
         log('ERROR', `WhatsApp client could not start: ${e.message}`);
     }
@@ -250,16 +349,9 @@ async function sendTelegram(chatId, text, files) {
 async function sendWhatsApp(chatId, text, files) {
     const results = { textSent: false, filesSent: 0, errors: [] };
 
-    // Live health check — verify session is truly alive before sending
-    try {
-        const state = await withTimeout(whatsappClient.getState(), 10000, 'WhatsApp state check');
-        if (state !== 'CONNECTED') {
-            results.errors.push(`WhatsApp session not connected (state: ${state}). Try refreshing.`);
-            return results;
-        }
-    } catch (e) {
-        results.errors.push(`WhatsApp health check failed: ${e.message}`);
-        whatsappReady = false;
+    // Verify session is alive using event-driven flag (no Puppeteer page evaluation)
+    if (!whatsappReady || !whatsappClient) {
+        results.errors.push('WhatsApp session is not connected. Please scan the QR code and try again.');
         return results;
     }
 
@@ -303,24 +395,39 @@ try {
 // API ROUTES
 // ==============================
 
-// WhatsApp phone number verification
-app.post('/api/whatsapp/verify', (req, res) => {
+// WhatsApp phone number verification — with brute-force protection
+app.post('/api/whatsapp/verify', verifyLimiter, (req, res) => {
     const { phone } = req.body || {};
-    if (waAllowedNumbers.length === 0) return res.json({ valid: true }); // No whitelist = open
-    if (phone && isWaAllowed(phone)) {
-        log('INFO', 'WhatsApp access granted', { phone: phone.slice(-4).padStart(phone.length, '*'), ip: req.ip });
+    if (!phone) return res.json({ valid: false });
+
+    // Whitelist is MANDATORY — if empty, deny all
+    if (waAllowedNumbers.length === 0) {
+        log('WARN', 'WhatsApp access denied (no numbers in whitelist)', { ip: req.ip });
+        return res.json({ valid: false });
+    }
+
+    if (isWaAllowed(phone)) {
+        const normalized = String(phone).replace(/[^\d]/g, '');
+        // Create a verified session tied to this IP
+        waVerifiedSessions[req.ip] = { phone: normalized, expiresAt: Date.now() + WA_SESSION_TTL };
+        log('INFO', 'WhatsApp access granted', { phone: normalized.slice(-4).padStart(normalized.length, '*'), ip: req.ip });
         return res.json({ valid: true });
     }
+
     log('WARN', 'WhatsApp access denied (number not whitelisted)', { ip: req.ip });
     return res.json({ valid: false });
 });
 
-// Check if WhatsApp requires verification
+// WhatsApp config — always restricted
 app.get('/api/whatsapp/config', (req, res) => {
-    res.json({ restricted: waAllowedNumbers.length > 0 });
+    res.json({ restricted: true }); // Always require verification
 });
 
+// WhatsApp status — only show QR to verified users
 app.get('/api/whatsapp/status', (req, res) => {
+    if (!isSessionVerified(req.ip)) {
+        return res.json({ ready: false, qr: null, error: 'Not verified' });
+    }
     res.json({ ready: whatsappReady, qr: whatsappReady ? null : whatsappQR });
 });
 
@@ -524,12 +631,27 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         } else if (channel === 'whatsapp') {
             if (!whatsappReady || !whatsappClient) { cleanupFiles(files); return res.status(503).json({ error: 'WhatsApp not connected. Scan the QR code first.' }); }
 
-            // Verify user is whitelisted
-            const verifyPhone = req.body.waVerifiedPhone || '';
-            if (waAllowedNumbers.length > 0 && !isWaAllowed(verifyPhone)) {
+            // SECURITY: Verify user has a valid verified session
+            if (!isSessionVerified(requestIP)) {
                 cleanupFiles(files);
-                log('WARN', 'WhatsApp upload rejected (number not whitelisted)', { ip: requestIP });
-                return res.status(403).json({ error: 'Your number is not authorized for WhatsApp.' });
+                log('WARN', 'WhatsApp upload rejected (no verified session)', { ip: requestIP });
+                return res.status(403).json({ error: 'Your session has expired. Please verify your phone number again.' });
+            }
+
+            // SECURITY: Double-check the verified phone is still whitelisted
+            const sessionPhone = getVerifiedPhone(requestIP);
+            if (!sessionPhone || !isWaAllowed(sessionPhone)) {
+                cleanupFiles(files);
+                delete waVerifiedSessions[requestIP];
+                log('WARN', 'WhatsApp upload rejected (phone removed from whitelist)', { ip: requestIP });
+                return res.status(403).json({ error: 'Your number is no longer authorized. Contact the admin.' });
+            }
+
+            // SECURITY: Check daily message limit
+            if (!checkDailyLimit(sessionPhone)) {
+                cleanupFiles(files);
+                log('WARN', `WhatsApp daily limit reached for ${sessionPhone}`, { ip: requestIP });
+                return res.status(429).json({ error: `Daily limit reached (${WA_DAILY_LIMIT} messages/day). Try again tomorrow.` });
             }
 
             const resolved = targets.map(t => ({ label: t, chatId: formatWhatsAppNumber(t) }));
@@ -569,6 +691,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                 log('ERROR', 'WhatsApp delivery fully failed', { errors: allErrors });
                 return res.status(502).json({ error: `WhatsApp delivery failed: ${allErrors[0]}` });
             }
+
+            // Track daily usage on success
+            if (totalSent > 0) incrementDailyUsage(getVerifiedPhone(requestIP));
 
             log('INFO', `WhatsApp delivery complete`, { recipients: resolved.length, filesSent: totalSent });
             const warnSuffix = allErrors.length > 0 ? ` (${allErrors.length} warning(s))` : '';
