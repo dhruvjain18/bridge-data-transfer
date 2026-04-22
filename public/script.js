@@ -629,7 +629,7 @@ async function loadAdminData() {
             <div class="admin-stat"><div class="admin-stat-value">${dash.uptime}</div><div class="admin-stat-label">Uptime</div></div>
             <div class="admin-stat"><div class="admin-stat-value">${dash.memoryMB} MB</div><div class="admin-stat-label">Memory</div></div>
             <div class="admin-stat ${dash.telegram.connected ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.telegram.users}</div><div class="admin-stat-label">TG Users</div></div>
-            <div class="admin-stat ${dash.whatsapp.connected ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.whatsapp.allowedNumbers}</div><div class="admin-stat-label">WA Allowed</div></div>
+            <div class="admin-stat ${dash.whatsapp.activeSessions > 0 ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.whatsapp.activeSessions}/${dash.whatsapp.allowedNumbers}</div><div class="admin-stat-label">WA Active/Allowed</div></div>
         `;
 
         // Whitelist
