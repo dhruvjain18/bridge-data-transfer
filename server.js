@@ -356,16 +356,20 @@ async function clearSessionFromDB(sessionId) {
 const activeSessions = new Map();
 const MAX_ACTIVE_SESSIONS = 10;
 const SESSION_IDLE_TIMEOUT = 30 * 60 * 1000;
+const sessionRetries = new Map();
 
 async function createOrRestoreSession(phoneId) {
+    // If already active AND has a socket, just return it
     if (activeSessions.has(phoneId)) {
         const existing = activeSessions.get(phoneId);
-        existing.lastActivity = Date.now();
-        return existing;
+        if (existing.socket) {
+            existing.lastActivity = Date.now();
+            return existing;
+        }
+        activeSessions.delete(phoneId);
     }
 
     if (activeSessions.size >= MAX_ACTIVE_SESSIONS) {
-        // Evict oldest idle session
         let oldestKey = null, oldestTime = Infinity;
         for (const [key, sess] of activeSessions) {
             if (sess.lastActivity < oldestTime) { oldestTime = sess.lastActivity; oldestKey = key; }
@@ -405,6 +409,7 @@ async function createOrRestoreSession(phoneId) {
             if (qrCode) {
                 try {
                     session.qr = await qrcode.toDataURL(qrCode, { margin: 2, scale: 8 });
+                    session.connecting = false;
                     log('INFO', `WhatsApp QR ready for ${phoneId}`);
                 } catch (e) { log('ERROR', `QR render error: ${e.message}`); }
             }
@@ -413,6 +418,7 @@ async function createOrRestoreSession(phoneId) {
                 session.ready = true;
                 session.connecting = false;
                 session.qr = null;
+                sessionRetries.delete(phoneId); // Reset retries on success
                 log('INFO', `WhatsApp connected for user ${phoneId}`);
             }
 
@@ -421,15 +427,19 @@ async function createOrRestoreSession(phoneId) {
                 session.connecting = false;
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                const retries = sessionRetries.get(phoneId) || 0;
 
+                // Clean up current session
                 activeSessions.delete(phoneId);
 
-                if (shouldReconnect) {
-                    log('INFO', `WhatsApp reconnecting for ${phoneId}...`);
+                if (shouldReconnect && retries < 5) {
+                    sessionRetries.set(phoneId, retries + 1);
+                    log('INFO', `WhatsApp reconnecting for ${phoneId} (attempt ${retries + 1}/5)...`);
                     setTimeout(() => createOrRestoreSession(phoneId), 3000);
                 } else {
-                    log('INFO', `WhatsApp logged out for ${phoneId}`);
-                    await clearSessionFromDB(phoneId);
+                    sessionRetries.delete(phoneId);
+                    log('INFO', `WhatsApp session ended for ${phoneId} (${shouldReconnect ? 'max retries' : 'logged out'})`);
+                    if (!shouldReconnect) await clearSessionFromDB(phoneId);
                 }
             }
         });
