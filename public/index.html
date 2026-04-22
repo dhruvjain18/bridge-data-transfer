@@ -81,7 +81,7 @@
             <details class="faq-item" open><summary>What is Bridge?</summary><p>Bridge is a secure file transfer platform that lets you send files and messages directly to anyone via <b>Telegram</b> or <b>WhatsApp</b> — no email, no sign-up, no hassle.</p></details>
             <details class="faq-item"><summary>How do I find my Telegram username?</summary><p>Open <b>Telegram</b> → <b>Settings</b> → your username starts with <b>@</b>. Example: <code>@dhruv_19</code></p></details>
             <details class="faq-item"><summary>How do I register for the Telegram bot?</summary><p>Search <a href="https://t.me/File_Bridge_19_bot" target="_blank">@File_Bridge_19_bot</a> on Telegram and tap <b>Start</b>. You are now registered forever!</p></details>
-            <details class="faq-item"><summary>How do I access WhatsApp?</summary><p>WhatsApp is available only for <b>authorized users</b>. Click the WhatsApp tab and verify your phone number. If your number is registered by the admin, you'll get instant access. If not, contact the admin to add you.</p></details>
+            <details class="faq-item"><summary>How do I access WhatsApp?</summary><p>WhatsApp is available only for <b>authorized users</b>. Click the WhatsApp tab, verify your phone number, then scan the QR code with <b>your own WhatsApp</b> (Settings → Linked Devices → Link a Device). Your session is saved — you won't need to scan again!</p></details>
 
             <p class="faq-section-title">Install Telegram</p>
             <details class="faq-item"><summary>How to install Telegram on Android?</summary><p>Open <b>Google Play Store</b> → search <b>"Telegram"</b> → Install → sign up with your phone number.</p></details>
@@ -99,7 +99,7 @@
 
             <p class="faq-section-title">Privacy & Security</p>
             <details class="faq-item"><summary>Can others see my files?</summary><p>No. Files go directly to the recipient's private chat. Files are <b>deleted instantly</b> from the server after delivery.</p></details>
-            <details class="faq-item"><summary>Why is WhatsApp restricted?</summary><p>WhatsApp has strict usage limits. To protect the service, only <b>phone numbers whitelisted by the admin</b> can access it. This ensures no one misuses the channel. Telegram is open to everyone.</p></details>
+            <details class="faq-item"><summary>Why is WhatsApp restricted?</summary><p>Each user links their <b>own WhatsApp</b> via QR scan. Only <b>phone numbers whitelisted by the admin</b> can access this feature. Your session is saved securely — no need to re-scan on reconnect.</p></details>
             <details class="faq-item"><summary>Is my data stored anywhere?</summary><p>No. Files exist on the server only for seconds. Transfer history is stored only in <b>your browser</b>.</p></details>
         </div>
     </div>
@@ -144,12 +144,12 @@
 
             <!-- WhatsApp QR Overlay -->
             <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
-                <p>Scan with WhatsApp → Linked Devices</p>
+                <p>Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
                 <div class="qr-box">
                     <img id="wa-qr-image" src="" alt="QR" class="hidden">
-                    <div id="wa-qr-loading">Generating QR...</div>
+                    <div id="wa-qr-loading">Creating your session...</div>
                 </div>
-                <p class="wa-qr-hint">One-time only! It will auto-connect.</p>
+                <p class="wa-qr-hint">One-time scan! Your session is saved and will auto-reconnect.</p>
             </div>
 
             <main id="main-content">
