@@ -359,35 +359,41 @@ const SESSION_IDLE_TIMEOUT = 30 * 60 * 1000;
 const sessionRetries = new Map();
 
 async function createOrRestoreSession(phoneId) {
-    // If already active AND has a socket, just return it
-    if (activeSessions.has(phoneId)) {
-        const existing = activeSessions.get(phoneId);
-        if (existing.socket) {
-            existing.lastActivity = Date.now();
-            return existing;
-        }
-        activeSessions.delete(phoneId);
+    let session = activeSessions.get(phoneId);
+
+    // Already active with a working socket — just return it
+    if (session && session.socket) {
+        session.lastActivity = Date.now();
+        return session;
     }
 
-    if (activeSessions.size >= MAX_ACTIVE_SESSIONS) {
-        let oldestKey = null, oldestTime = Infinity;
-        for (const [key, sess] of activeSessions) {
-            if (sess.lastActivity < oldestTime) { oldestTime = sess.lastActivity; oldestKey = key; }
+    // Session exists but socket is gone (reconnecting) — reuse the session object
+    if (!session) {
+        if (activeSessions.size >= MAX_ACTIVE_SESSIONS) {
+            let oldestKey = null, oldestTime = Infinity;
+            for (const [key, sess] of activeSessions) {
+                if (sess.lastActivity < oldestTime) { oldestTime = sess.lastActivity; oldestKey = key; }
+            }
+            if (oldestKey) {
+                log('INFO', `Evicting idle session: ${oldestKey}`);
+                try { activeSessions.get(oldestKey).socket?.end(); } catch (e) {}
+                activeSessions.delete(oldestKey);
+            }
         }
-        if (oldestKey) {
-            log('INFO', `Evicting idle session: ${oldestKey}`);
-            try { activeSessions.get(oldestKey).socket?.end(); } catch (e) {}
-            activeSessions.delete(oldestKey);
-        }
+        session = { socket: null, qr: null, ready: false, lastActivity: Date.now(), connecting: true };
+        activeSessions.set(phoneId, session);
     }
 
     if (!db) {
         log('ERROR', 'Cannot create WhatsApp session — MongoDB not connected');
+        activeSessions.delete(phoneId);
         return null;
     }
 
-    const session = { socket: null, qr: null, ready: false, lastActivity: Date.now(), connecting: true };
-    activeSessions.set(phoneId, session);
+    // Reset state for new connection attempt
+    session.connecting = true;
+    session.ready = false;
+    session.lastActivity = Date.now();
 
     try {
         const authState = await useMongoDBAuthState(phoneId);
@@ -418,26 +424,26 @@ async function createOrRestoreSession(phoneId) {
                 session.ready = true;
                 session.connecting = false;
                 session.qr = null;
-                sessionRetries.delete(phoneId); // Reset retries on success
+                sessionRetries.delete(phoneId);
                 log('INFO', `WhatsApp connected for user ${phoneId}`);
             }
 
             if (connection === 'close') {
                 session.ready = false;
-                session.connecting = false;
+                session.connecting = true;
+                session.socket = null; // Clear socket but KEEP session in activeSessions
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 const retries = sessionRetries.get(phoneId) || 0;
-
-                // Clean up current session
-                activeSessions.delete(phoneId);
 
                 if (shouldReconnect && retries < 5) {
                     sessionRetries.set(phoneId, retries + 1);
                     log('INFO', `WhatsApp reconnecting for ${phoneId} (attempt ${retries + 1}/5)...`);
                     setTimeout(() => createOrRestoreSession(phoneId), 3000);
                 } else {
+                    // Only remove session from map on final failure
                     sessionRetries.delete(phoneId);
+                    activeSessions.delete(phoneId);
                     log('INFO', `WhatsApp session ended for ${phoneId} (${shouldReconnect ? 'max retries' : 'logged out'})`);
                     if (!shouldReconnect) await clearSessionFromDB(phoneId);
                 }
@@ -715,6 +721,30 @@ app.get('/api/admin/logs', adminAuth, (req, res) => {
         const lines = content.trim().split('\n').filter(Boolean).slice(-50).reverse();
         res.json({ logs: lines });
     } catch (e) { res.json({ logs: [] }); }
+});
+
+// Clear all WhatsApp sessions from MongoDB (fixes corrupted auth data)
+app.post('/api/admin/wa-clear-sessions', adminAuth, async (req, res) => {
+    try {
+        // Disconnect all active sessions
+        for (const [id, session] of activeSessions) {
+            try { session.socket?.end(); } catch (e) {}
+        }
+        activeSessions.clear();
+        sessionRetries.clear();
+
+        // Wipe all auth data from MongoDB
+        if (db) {
+            const result = await db.collection('wa_auth').deleteMany({});
+            log('INFO', `Admin cleared all WhatsApp sessions (${result.deletedCount} records)`);
+            res.json({ success: true, message: `Cleared ${result.deletedCount} session records. Users can now scan fresh QR codes.` });
+        } else {
+            res.json({ success: false, message: 'MongoDB not connected.' });
+        }
+    } catch (e) {
+        log('ERROR', `Failed to clear WA sessions: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // ==============================
