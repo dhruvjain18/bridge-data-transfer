@@ -404,7 +404,7 @@ async function createOrRestoreSession(phoneId) {
         const sock = makeWASocket({
             auth: authState.state,
             printQRInTerminal: false,
-            logger: pino({ level: 'silent' }),
+            logger: pino({ level: 'warn' }),
             browser: ['Bridge', 'Desktop', '3.0'],
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 30000,
@@ -415,6 +415,13 @@ async function createOrRestoreSession(phoneId) {
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr: qrCode } = update;
 
+            // Log every connection update for debugging
+            log('INFO', `WA connection update for ${phoneId}`, {
+                connection: connection || 'none',
+                hasQR: !!qrCode,
+                error: lastDisconnect?.error?.message || null,
+                statusCode: lastDisconnect?.error?.output?.statusCode || null
+            });
             if (qrCode) {
                 try {
                     session.qr = await qrcode.toDataURL(qrCode, { margin: 2, scale: 8 });
