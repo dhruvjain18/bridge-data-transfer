@@ -6,7 +6,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { MongoClient } = require('mongodb');
 const baileys = require('@whiskeysockets/baileys');
 const makeWASocket = baileys.default;
-const { DisconnectReason, initAuthCreds, BufferJSON, proto } = baileys;
+const { DisconnectReason, initAuthCreds, BufferJSON, proto, fetchLatestBaileysVersion, Browsers } = baileys;
 const qrcode = require('qrcode');
 const pino = require('pino');
 const fs = require('fs');
@@ -401,11 +401,15 @@ async function createOrRestoreSession(phoneId) {
     try {
         const authState = await useMongoDBAuthState(phoneId);
 
+        const { version } = await fetchLatestBaileysVersion();
+        log('INFO', `Using WhatsApp Web version: ${version}`);
+
         const sock = makeWASocket({
             auth: authState.state,
+            version,
             printQRInTerminal: false,
             logger: pino({ level: 'warn' }),
-            browser: ['Bridge', 'Desktop', '3.0'],
+            browser: Browsers.windows('Chrome'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 30000,
         });
