@@ -64,7 +64,10 @@ const verifyLimiter = rateLimit({
 });
 
 app.use('/api/', (req, res, next) => {
-    if (req.path === '/api/whatsapp/status') return next();
+    // Exclude high-frequency polling endpoints from rate limiting
+    const exempt = ['/whatsapp/status', '/whatsapp/config', '/admin/dashboard',
+                    '/admin/whitelist', '/admin/telegram-users', '/admin/scheduled', '/admin/logs'];
+    if (exempt.some(p => req.path.startsWith(p))) return next();
     apiLimiter(req, res, next);
 });
 
