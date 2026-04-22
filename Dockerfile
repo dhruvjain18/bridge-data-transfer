@@ -6,11 +6,10 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 COPY . .
 
 EXPOSE ${PORT:-3000}
 
 CMD ["npm", "start"]
-
