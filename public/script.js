@@ -132,8 +132,7 @@ function selectCountry(index) {
     countryFlag.textContent = selectedCountry.flag;
     countryCodeEl.textContent = selectedCountry.code;
     countryDropdown.classList.add('hidden');
-    waPhoneInput.maxLength = selectedCountry.digits;
-    waPhoneInput.placeholder = '0'.repeat(selectedCountry.digits);
+    waPhoneInput.placeholder = '0'.repeat(selectedCountry.digits) + ', ...';
     validatePhone();
 }
 
@@ -141,21 +140,30 @@ countryBtn.addEventListener('click', (e) => { e.stopPropagation(); countryDropdo
 document.addEventListener('click', () => countryDropdown.classList.add('hidden'));
 
 function validatePhone() {
-    const val = waPhoneInput.value.replace(/\D/g, '');
-    if (!val) { phoneHint.textContent = ''; phoneHint.className = 'phone-hint'; return false; }
-    if (val.length === selectedCountry.digits) {
-        phoneHint.textContent = `✓ Valid ${selectedCountry.name} number`;
+    const rawPhones = waPhoneInput.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (rawPhones.length === 0) { phoneHint.textContent = ''; phoneHint.className = 'phone-hint'; return false; }
+    
+    if (rawPhones.length === 1) {
+        const val = rawPhones[0].replace(/\D/g, '');
+        if (val.length === selectedCountry.digits) {
+            phoneHint.textContent = `✓ Valid ${selectedCountry.name} number`;
+            phoneHint.className = 'phone-hint valid';
+            return true;
+        } else {
+            phoneHint.textContent = `Enter ${selectedCountry.digits} digits (currently ${val.length})`;
+            phoneHint.className = 'phone-hint invalid';
+            return false;
+        }
+    } else {
+        // Multiple numbers entered
+        phoneHint.textContent = `Multiple numbers detected (${rawPhones.length})`;
         phoneHint.className = 'phone-hint valid';
         return true;
-    } else {
-        phoneHint.textContent = `Enter ${selectedCountry.digits} digits (currently ${val.length})`;
-        phoneHint.className = 'phone-hint invalid';
-        return false;
     }
 }
 
 waPhoneInput.addEventListener('input', () => {
-    waPhoneInput.value = waPhoneInput.value.replace(/\D/g, '');
+    waPhoneInput.value = waPhoneInput.value.replace(/[^0-9,\s]/g, '');
     validatePhone();
 });
 
@@ -290,9 +298,45 @@ function renderHistory() {
     historyBody.innerHTML = history.map(item => {
         const files = (item.files || []).map(f => `<span>📎 ${escapeHTML(f)}</span>`).join('');
         const ch = item.channel || 'telegram';
-        return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${ch === 'telegram' ? '📱 TG' : '💬 WA'}</span><span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? '⏰ Scheduled' : '✅ Sent'}</span></div>`;
+        const isFuture = item.scheduledTime && new Date(item.scheduledTime) > new Date() && !item.canceled;
+        
+        let statusHtml = `<span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? (item.canceled ? '🚫 Canceled' : '⏰ Scheduled') : '✅ Sent'}</span>`;
+        if (isFuture) {
+            statusHtml += `<button class="cancel-job-btn" data-id="${item.jobId}">Cancel</button>`;
+        }
+        
+        return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${ch === 'telegram' ? '📱 TG' : '💬 WA'}</span>${statusHtml}</div>`;
     }).join('');
 }
+
+historyBody.addEventListener('click', async (e) => {
+    if (e.target.classList.contains('cancel-job-btn')) {
+        const jobId = e.target.dataset.id;
+        const btn = e.target;
+        btn.textContent = 'Canceling...';
+        btn.disabled = true;
+        try {
+            const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (res.ok) {
+                btn.textContent = 'Canceled';
+                btn.classList.add('canceled');
+                const history = getHistory();
+                const item = history.find(i => i.jobId === jobId);
+                if (item) { item.canceled = true; saveHistory(history); }
+                renderHistory();
+            } else {
+                btn.textContent = 'Cancel';
+                btn.disabled = false;
+                alert(data.error);
+            }
+        } catch {
+            btn.textContent = 'Cancel';
+            btn.disabled = false;
+            alert('Failed to cancel job');
+        }
+    }
+});
 
 // ==============================
 // ONBOARDING
@@ -470,7 +514,16 @@ async function handleSend() {
                 playWhoosh();
                 showStatus(`${result.message} 🚀`, 'success');
                 const displayTarget = activeChannel === 'whatsapp' ? `${selectedCountry.code} ${waPhoneInput.value}` : target;
-                addHistoryEntry({ to: displayTarget, files: filesToSend.map(f => f.name), message, time: new Date().toLocaleString(), scheduled: !!result.scheduled, channel: activeChannel });
+                addHistoryEntry({ 
+                    to: displayTarget, 
+                    files: filesToSend.map(f => f.name), 
+                    message, 
+                    time: new Date().toLocaleString(), 
+                    scheduled: !!result.scheduled, 
+                    channel: activeChannel,
+                    jobId: result.jobId || null,
+                    scheduledTime: result.scheduled ? new Date(scheduleTime.value).toISOString() : null
+                });
                 selectedFiles = []; renderFileList(); messageInput.value = '';
                 if (isScheduled) { isScheduled = false; schedulePicker.classList.add('hidden'); scheduleToggle.classList.remove('active'); scheduleTime.value = ''; }
             } else {
