@@ -81,7 +81,7 @@
             <details class="faq-item" open><summary>What is Bridge?</summary><p>Bridge is a secure file transfer platform that lets you send files and messages directly to anyone via <b>Telegram</b> or <b>WhatsApp</b> — no email, no sign-up, no hassle.</p></details>
             <details class="faq-item"><summary>How do I find my Telegram username?</summary><p>Open <b>Telegram</b> → <b>Settings</b> → your username starts with <b>@</b>. Example: <code>@dhruv_19</code></p></details>
             <details class="faq-item"><summary>How do I register for the Telegram bot?</summary><p>Search <a href="https://t.me/File_Bridge_19_bot" target="_blank">@File_Bridge_19_bot</a> on Telegram and tap <b>Start</b>. You are now registered forever!</p></details>
-            <details class="faq-item"><summary>How do I access WhatsApp?</summary><p>WhatsApp is available only for <b>authorized users</b>. Click the WhatsApp tab, verify your phone number, then scan the QR code with <b>your own WhatsApp</b> (Settings → Linked Devices → Link a Device). Your session is saved — you won't need to scan again!</p></details>
+            <details class="faq-item"><summary>How do I access WhatsApp?</summary><p>Click the <b>WhatsApp</b> tab, then scan the QR code with <b>your own WhatsApp</b> (Settings → Linked Devices → Link a Device). That's it — no phone verification needed! Your session is saved and will auto-reconnect.</p></details>
 
             <p class="faq-section-title">Install Telegram</p>
             <details class="faq-item"><summary>How to install Telegram on Android?</summary><p>Open <b>Google Play Store</b> → search <b>"Telegram"</b> → Install → sign up with your phone number.</p></details>
@@ -99,7 +99,7 @@
 
             <p class="faq-section-title">Privacy & Security</p>
             <details class="faq-item"><summary>Can others see my files?</summary><p>No. Files go directly to the recipient's private chat. Files are <b>deleted instantly</b> from the server after delivery.</p></details>
-            <details class="faq-item"><summary>Why is WhatsApp restricted?</summary><p>Each user links their <b>own WhatsApp</b> via QR scan. Only <b>phone numbers whitelisted by the admin</b> can access this feature. Your session is saved securely — no need to re-scan on reconnect.</p></details>
+            <details class="faq-item"><summary>How does WhatsApp authentication work?</summary><p>Each user links their <b>own WhatsApp</b> via QR scan — this is the only authentication needed. Your session is saved securely — no need to re-scan on reconnect. You can send messages to any phone number.</p></details>
             <details class="faq-item"><summary>Is my data stored anywhere?</summary><p>No. Files exist on the server only for seconds. Transfer history is stored only in <b>your browser</b>.</p></details>
         </div>
     </div>
@@ -127,19 +127,7 @@
             <!-- Channel Selector -->
             <div class="channel-selector">
                 <button class="channel-btn active" id="btn-telegram" data-channel="telegram">📱 Telegram</button>
-                <button class="channel-btn" id="btn-whatsapp" data-channel="whatsapp">🔒 WhatsApp</button>
-            </div>
-
-            <!-- WhatsApp Phone Verification Gate -->
-            <div class="wa-gate hidden" id="wa-gate">
-                <div class="wa-gate-icon">🔐</div>
-                <p>WhatsApp is restricted to authorized users.<br>Verify your phone number to continue.</p>
-                <div class="wa-gate-input">
-                    <input type="tel" id="wa-verify-phone" placeholder="Enter your phone number" autocomplete="off">
-                    <button id="wa-verify-submit">Verify</button>
-                </div>
-                <p class="wa-gate-hint">Enter with country code, e.g. 9188******12</p>
-                <p class="wa-gate-error hidden" id="wa-gate-error">Your number is not authorized. Contact the admin.</p>
+                <button class="channel-btn" id="btn-whatsapp" data-channel="whatsapp">💬 WhatsApp</button>
             </div>
 
             <!-- WhatsApp QR Overlay -->
