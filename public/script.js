@@ -39,10 +39,6 @@ const countryFlag = document.getElementById('country-flag');
 const countryCodeEl = document.getElementById('country-code');
 const countryDropdown = document.getElementById('country-dropdown');
 const phoneHint = document.getElementById('phone-hint');
-const waGate = document.getElementById('wa-gate');
-const waVerifyPhone = document.getElementById('wa-verify-phone');
-const waVerifySubmit = document.getElementById('wa-verify-submit');
-const waGateError = document.getElementById('wa-gate-error');
 const mainContent = document.getElementById('main-content');
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -50,99 +46,36 @@ let selectedFiles = [];
 let activeChannel = 'telegram';
 let waPollingInterval = null;
 let waAccessVerified = false;
-let waRestricted = false;
-let verifiedPhone = ''; // The phone that passed verification
-
-// XSS Protection
-function escapeHTML(str) {
-    if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
+let verifiedPhone = '';
 
 // ==============================
-// WHATSAPP PHONE VERIFICATION
+// WHATSAPP SESSION INIT (QR scan = authentication)
 // ==============================
-async function checkWaConfig() {
-    try {
-        const res = await fetch('/api/whatsapp/config');
-        const data = await res.json();
-        waRestricted = data.restricted;
+async function initWhatsAppSession() {
+    if (waAccessVerified) return;
 
-        if (!waRestricted) {
-            waAccessVerified = true;
-            return;
-        }
-
-        // Check if user was already verified (saved phone)
-        const savedPhone = localStorage.getItem('bridge_wa_verified_phone');
-        if (savedPhone) {
-            const verifyRes = await fetch('/api/whatsapp/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: savedPhone })
-            });
-            const verifyData = await verifyRes.json();
-            if (verifyData.valid) {
-                waAccessVerified = true;
-                verifiedPhone = savedPhone;
-                return;
-            } else {
-                localStorage.removeItem('bridge_wa_verified_phone');
-            }
-        }
-    } catch (e) {}
-}
-
-waVerifySubmit.addEventListener('click', handleVerify);
-waVerifyPhone.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleVerify(); });
-
-// Only allow digits in verify input
-waVerifyPhone.addEventListener('input', () => {
-    waVerifyPhone.value = waVerifyPhone.value.replace(/\D/g, '');
-});
-
-async function handleVerify() {
-    const phone = waVerifyPhone.value.replace(/\D/g, '');
-    if (!phone || phone.length < 8) {
-        waGateError.textContent = 'Enter a valid phone number with country code.';
-        waGateError.classList.remove('hidden');
-        return;
+    // Use a stored session ID or generate one
+    let sessionPhone = localStorage.getItem('bridge_wa_session_phone');
+    if (!sessionPhone) {
+        sessionPhone = 'wa_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        localStorage.setItem('bridge_wa_session_phone', sessionPhone);
     }
-
-    waVerifySubmit.textContent = 'Verifying...';
-    waVerifySubmit.disabled = true;
+    verifiedPhone = sessionPhone;
 
     try {
         const res = await fetch('/api/whatsapp/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone })
+            body: JSON.stringify({ phone: sessionPhone })
         });
         const data = await res.json();
-
         if (data.valid) {
             waAccessVerified = true;
-            verifiedPhone = phone;
-            localStorage.setItem('bridge_wa_verified_phone', phone);
-            waGate.classList.add('hidden');
-            waGateError.classList.add('hidden');
-            whatsappInputDiv.classList.remove('hidden');
-            mainContent.classList.remove('hidden');
-            btnWhatsapp.innerHTML = '💬 WhatsApp';
             startWaPolling();
-        } else {
-            waGateError.textContent = 'Your number is not authorized. Contact the admin.';
-            waGateError.classList.remove('hidden');
-            waVerifyPhone.value = '';
-            waVerifyPhone.focus();
         }
     } catch (e) {
-        waGateError.textContent = 'Connection error. Try again.';
-        waGateError.classList.remove('hidden');
+        console.error('Failed to init WhatsApp session', e);
     }
-
-    waVerifySubmit.textContent = 'Verify';
-    waVerifySubmit.disabled = false;
 }
 
 // ==============================
@@ -255,6 +188,12 @@ themeToggle.addEventListener('click', () => {
 });
 setTheme(localStorage.getItem('bridge_theme') || 'dark');
 
+// XSS Protection
+function escapeHTML(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 // ==============================
 // CHANNEL
 // ==============================
@@ -266,20 +205,10 @@ function setChannel(channel) {
     telegramInputDiv.classList.toggle('hidden', channel !== 'telegram');
 
     if (channel === 'whatsapp') {
-        if (waRestricted && !waAccessVerified) {
-            waGate.classList.remove('hidden');
-            whatsappInputDiv.classList.add('hidden');
-            mainContent.classList.add('hidden');
-            waVerifyPhone.focus();
-        } else {
-            waGate.classList.add('hidden');
-            whatsappInputDiv.classList.remove('hidden');
-            mainContent.classList.remove('hidden');
-            btnWhatsapp.innerHTML = '💬 WhatsApp';
-            startWaPolling();
-        }
+        whatsappInputDiv.classList.remove('hidden');
+        mainContent.classList.remove('hidden');
+        initWhatsAppSession();
     } else {
-        waGate.classList.add('hidden');
         whatsappInputDiv.classList.add('hidden');
         mainContent.classList.remove('hidden');
         stopWaPolling();
@@ -475,7 +404,7 @@ async function handleSend() {
                 if (xhr.status === 403) {
                     waAccessVerified = false;
                     verifiedPhone = '';
-                    localStorage.removeItem('bridge_wa_verified_phone');
+                    localStorage.removeItem('bridge_wa_session_phone');
                     setChannel('whatsapp');
                 }
             }
@@ -500,11 +429,6 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 window.addEventListener('DOMContentLoaded', async () => {
     const s = localStorage.getItem('telegram_bridge_chat_id');
     if (s) chatIdInput.value = s;
-
-    await checkWaConfig();
-    if (waAccessVerified) {
-        btnWhatsapp.innerHTML = '💬 WhatsApp';
-    }
 });
 
 // ==============================
