@@ -11,14 +11,9 @@ const onboarding = document.getElementById('onboarding');
 const dismissBtn = document.getElementById('dismiss-btn');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIcon = document.getElementById('theme-icon');
-const qrShareBtn = document.getElementById('qr-share-btn');
-const shareModal = document.getElementById('share-modal');
-const shareModalClose = document.getElementById('share-modal-close');
-const shareQrImage = document.getElementById('share-qr-image');
 const previewModal = document.getElementById('preview-modal');
 const previewModalClose = document.getElementById('preview-modal-close');
 const previewImage = document.getElementById('preview-image');
-const previewPdf = document.getElementById('preview-pdf');
 const helpFab = document.getElementById('help-fab');
 const helpFabIcon = document.getElementById('help-fab-icon');
 const helpChat = document.getElementById('help-chat');
@@ -286,14 +281,6 @@ historyFab.addEventListener('click', () => { historyPanel.classList.toggle('hidd
 historyClose.addEventListener('click', () => { historyPanel.classList.add('hidden'); historyFab.classList.remove('active'); });
 historyClear.addEventListener('click', () => { localStorage.removeItem('bridge_history'); renderHistory(); });
 
-qrShareBtn.addEventListener('click', () => {
-    shareModal.classList.remove('hidden');
-    const url = encodeURIComponent(window.location.href);
-    shareQrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${url}`;
-});
-shareModalClose.addEventListener('click', () => shareModal.classList.add('hidden'));
-shareModal.addEventListener('click', (e) => { if (e.target === shareModal) shareModal.classList.add('hidden'); });
-
 function getHistory() { try { return JSON.parse(localStorage.getItem('bridge_history') || '[]'); } catch { return []; } }
 function saveHistory(h) { localStorage.setItem('bridge_history', JSON.stringify(h.slice(-50))); }
 function addHistoryEntry(e) { const h = getHistory(); h.unshift(e); saveHistory(h); }
@@ -343,13 +330,11 @@ function addFiles(fl) {
 }
 previewModalClose.addEventListener('click', () => {
     previewModal.classList.add('hidden');
-    previewPdf.src = '';
     previewImage.src = '';
 });
 previewModal.addEventListener('click', (e) => {
     if (e.target === previewModal) {
         previewModal.classList.add('hidden');
-        previewPdf.src = '';
         previewImage.src = '';
     }
 });
@@ -382,13 +367,10 @@ function renderFileList() {
         if (file.type.startsWith('image/')) {
             previewImage.src = URL.createObjectURL(file);
             previewImage.classList.remove('hidden');
-            previewPdf.classList.add('hidden');
+            previewModal.classList.remove('hidden');
         } else if (file.type === 'application/pdf') {
-            previewPdf.src = URL.createObjectURL(file);
-            previewPdf.classList.remove('hidden');
-            previewImage.classList.add('hidden');
+            window.open(URL.createObjectURL(file), '_blank');
         }
-        previewModal.classList.remove('hidden');
     }));
     updateSendButton();
 }
@@ -458,7 +440,13 @@ async function handleSend() {
     formData.append('channel', activeChannel);
     formData.append('chatId', target);
     formData.append('message', message);
-    if (isScheduled && scheduleTime.value) formData.append('scheduledTime', new Date(scheduleTime.value).toISOString());
+    if (isScheduled && scheduleTime.value) {
+        formData.append('scheduledTime', new Date(scheduleTime.value).toISOString());
+        const scheduleCycle = document.getElementById('schedule-cycle');
+        if (scheduleCycle && scheduleCycle.value !== 'none') {
+            formData.append('cyclePeriod', scheduleCycle.value);
+        }
+    }
     filesToSend.forEach(f => formData.append('files', f));
 
     // Send session ID for server-side session lookup
