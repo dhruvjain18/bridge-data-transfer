@@ -444,11 +444,7 @@ const adminPasswordInput = document.getElementById('admin-password');
 const adminLoginBtn = document.getElementById('admin-login-btn');
 const adminLoginError = document.getElementById('admin-login-error');
 const adminStats = document.getElementById('admin-stats');
-const adminWhitelist = document.getElementById('admin-whitelist');
-const adminAddPhone = document.getElementById('admin-add-phone');
-const adminAddBtn = document.getElementById('admin-add-btn');
 const adminTgUsers = document.getElementById('admin-tg-users');
-const adminScheduled = document.getElementById('admin-scheduled');
 const adminLogs = document.getElementById('admin-logs');
 const adminRefreshLogs = document.getElementById('admin-refresh-logs');
 
@@ -554,17 +550,9 @@ async function loadAdminData() {
             <div class="admin-stat"><div class="admin-stat-value">${dash.uptime}</div><div class="admin-stat-label">Uptime</div></div>
             <div class="admin-stat"><div class="admin-stat-value">${dash.memoryMB} MB</div><div class="admin-stat-label">Memory</div></div>
             <div class="admin-stat ${dash.telegram.connected ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.telegram.users}</div><div class="admin-stat-label">TG Users</div></div>
-            <div class="admin-stat ${dash.whatsapp.activeSessions > 0 ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.whatsapp.activeSessions}/${dash.whatsapp.allowedNumbers}</div><div class="admin-stat-label">WA Active/Allowed</div></div>
+            <div class="admin-stat ${dash.whatsapp.activeSessions > 0 ? 'online' : 'offline'}"><div class="admin-stat-value">${dash.whatsapp.activeSessions}</div><div class="admin-stat-label">WA Active</div></div>
+            <div class="admin-stat"><div class="admin-stat-value">${dash.whatsapp.totalAuthenticated}</div><div class="admin-stat-label">WA Authenticated</div></div>
         `;
-
-        // Whitelist
-        const wa = await fetchAdminData('/api/admin/whitelist');
-        adminWhitelist.innerHTML = wa.numbers.length ? wa.numbers.map(n => `
-            <div class="admin-list-item">
-                <span class="admin-list-item-text">📱 +${n}</span>
-                <button class="admin-list-item-remove" onclick="removeWaNumber('${n}')">Remove</button>
-            </div>
-        `).join('') : '<div class="admin-list-empty">No numbers allowed yet</div>';
 
         // Telegram Users
         const tg = await fetchAdminData('/api/admin/telegram-users');
@@ -574,18 +562,6 @@ async function loadAdminData() {
                 <span class="admin-list-item-sub">${u.chatId}</span>
             </div>
         `).join('') : '<div class="admin-list-empty">No users registered</div>';
-
-        // Scheduled Jobs
-        const jobs = await fetchAdminData('/api/admin/scheduled');
-        adminScheduled.innerHTML = jobs.jobs.length ? jobs.jobs.map(j => `
-            <div class="admin-list-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
-                <div style="display: flex; justify-content: space-between; width: 100%;">
-                    <span class="admin-list-item-text">⏰ To: ${j.targets.join(', ')}</span>
-                    <span class="admin-list-item-sub">${j.fileCount} files</span>
-                </div>
-                <div class="admin-list-item-sub">At: ${new Date(j.scheduledFor).toLocaleString()}</div>
-            </div>
-        `).join('') : '<div class="admin-list-empty">No scheduled jobs</div>';
 
         // Logs
         loadLogs();
@@ -605,32 +581,4 @@ async function loadLogs() {
     } catch(e){}
 }
 adminRefreshLogs.addEventListener('click', loadLogs);
-
-adminAddBtn.addEventListener('click', async () => {
-    const phone = adminAddPhone.value.trim();
-    if (!phone) return;
-    adminAddBtn.disabled = true;
-    try {
-        await fetch('/api/admin/whitelist/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-            body: JSON.stringify({ phone })
-        });
-        adminAddPhone.value = '';
-        loadAdminData();
-    } catch(e){}
-    adminAddBtn.disabled = false;
-});
-
-async function removeWaNumber(phone) {
-    if(!confirm(`Remove ${phone} from WhatsApp access?`)) return;
-    try {
-        await fetch('/api/admin/whitelist/remove', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-            body: JSON.stringify({ phone })
-        });
-        loadAdminData();
-    } catch(e){}
-}
 
