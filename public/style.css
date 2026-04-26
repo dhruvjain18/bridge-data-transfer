@@ -446,6 +446,27 @@ body[data-active-channel="whatsapp"] .send-btn:hover { background: #128C7E; box-
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideRight { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-100%); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideOutUp { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-100%); } }
+
+/* Top Toast Notification */
+.top-toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 500; padding: 14px 28px; border-radius: 14px;
+    font-size: 14px; font-weight: 600; font-family: 'Inter', sans-serif;
+    backdrop-filter: blur(16px); box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    animation: slideDown 0.4s ease; white-space: nowrap;
+}
+.top-toast.hidden { display: none !important; }
+.top-toast.hiding { animation: slideOutUp 0.3s ease forwards; }
+.top-toast.success {
+    background: rgba(37,211,102,0.15); border: 1px solid var(--whatsapp);
+    color: var(--whatsapp);
+}
+.top-toast.error {
+    background: rgba(239,68,68,0.15); border: 1px solid var(--danger);
+    color: var(--danger);
+}
 
 @media (max-width: 480px) {
     .container { padding: 24px; }
