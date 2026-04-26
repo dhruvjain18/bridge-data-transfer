@@ -352,17 +352,20 @@ historyBody.addEventListener('click', async (e) => {
         try {
             const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
             const data = await res.json();
-            if (res.ok) {
+            if (res.ok || res.status === 404) {
                 btn.textContent = 'Canceled';
                 btn.classList.add('canceled');
                 const history = getHistory();
                 const item = history.find(i => i.jobId === jobId);
                 if (item) { item.canceled = true; saveHistory(history); }
                 renderHistory();
+                if (res.status === 404) {
+                    showStatus('Job was not found on server, marked as canceled.', 'info');
+                }
             } else {
                 btn.textContent = 'Cancel';
                 btn.disabled = false;
-                alert(data.error);
+                alert(data.error || 'Failed to cancel job');
             }
         } catch {
             btn.textContent = 'Cancel';
