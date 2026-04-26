@@ -15,7 +15,6 @@
 <body>
     <button class="admin-toggle" id="admin-toggle" title="Admin Panel">⚙️</button>
     <button class="theme-toggle" id="theme-toggle" title="Toggle theme"><span class="theme-icon" id="theme-icon">🌙</span></button>
-    <button class="qr-share-btn" id="qr-share-btn" title="Share via QR">📱</button>
     <button class="help-fab" id="help-fab" title="Help & FAQ"><span class="help-fab-icon" id="help-fab-icon">?</span></button>
     <button class="history-fab" id="history-fab" title="Transfer History">🕘</button>
 
@@ -148,7 +147,7 @@
                             </button>
                             <div class="country-dropdown hidden" id="country-dropdown"></div>
                         </div>
-                        <input type="tel" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off">
+                        <input type="text" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off">
                     </div>
                     <p class="phone-hint" id="phone-hint"></p>
                 </div>
@@ -162,6 +161,12 @@
                     <button class="schedule-toggle" id="schedule-toggle">📅 Schedule for later</button>
                     <div class="schedule-picker hidden" id="schedule-picker">
                         <input type="datetime-local" id="schedule-time" class="schedule-input">
+                        <select id="schedule-cycle" class="schedule-cycle">
+                            <option value="none">Does not repeat</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
                         <button class="schedule-cancel" id="schedule-cancel">Cancel</button>
                     </div>
                 </div>
@@ -203,19 +208,6 @@
         <button class="preview-modal-close" id="preview-modal-close">✕</button>
         <div class="preview-modal-content">
             <img id="preview-image" src="" alt="File Preview" class="hidden">
-            <iframe id="preview-pdf" src="" class="hidden"></iframe>
-        </div>
-    </div>
-
-    <!-- Share QR Modal -->
-    <div class="share-modal hidden" id="share-modal">
-        <div class="share-modal-content">
-            <button class="share-modal-close" id="share-modal-close">✕</button>
-            <h3>Scan to open on mobile</h3>
-            <div class="share-qr-container">
-                <img id="share-qr-image" src="" alt="Share QR Code">
-            </div>
-            <p>Scan this QR code with your phone's camera to open Bridge.</p>
         </div>
     </div>
 
