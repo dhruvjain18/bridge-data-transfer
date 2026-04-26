@@ -292,7 +292,7 @@ body {
 .country-option .co-flag { font-size: 18px; }
 .country-option .co-name { flex: 1; }
 .country-option .co-code { color: var(--text-muted); font-weight: 600; font-size: 12px; }
-.phone-input-wrapper input[type="tel"] {
+.phone-input-wrapper input[type="text"] {
     border-radius: 0 12px 12px 0 !important; flex: 1;
 }
 .phone-hint {
@@ -364,6 +364,15 @@ body {
 .history-item-status { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
 .history-item-status.success { background: var(--success-bg); color: var(--accent); }
 .history-item-status.scheduled { background: rgba(250,204,21,0.1); color: #eab308; }
+.cancel-job-btn {
+    display: inline-block; margin-top: 6px; margin-left: 8px; padding: 3px 10px;
+    border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+    background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2);
+    font-family: 'Inter', sans-serif; transition: all 0.2s;
+}
+.cancel-job-btn:hover:not(:disabled) { background: rgba(239,68,68,0.2); border-color: var(--danger); }
+.cancel-job-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cancel-job-btn.canceled { background: var(--surface-hover); color: var(--text-muted); border-color: var(--border-color); }
 
 /* Page Layout */
 .page-wrapper { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 48px 24px; }
