@@ -292,21 +292,55 @@ historyClear.addEventListener('click', () => { localStorage.removeItem('bridge_h
 function getHistory() { try { return JSON.parse(localStorage.getItem('bridge_history') || '[]'); } catch { return []; } }
 function saveHistory(h) { localStorage.setItem('bridge_history', JSON.stringify(h.slice(-50))); }
 function addHistoryEntry(e) { const h = getHistory(); h.unshift(e); saveHistory(h); }
+let activeHistoryTab = 'messages';
+document.querySelectorAll('.history-tab').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.history-tab').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        activeHistoryTab = e.target.dataset.tab;
+        renderHistory();
+    });
+});
+
+function renderHistoryItem(item) {
+    const files = (item.files || []).map(f => `<span>📎 ${escapeHTML(f)}</span>`).join('');
+    const ch = item.channel || 'telegram';
+    const isFuture = item.scheduledTime && new Date(item.scheduledTime) > new Date() && !item.canceled;
+    
+    let statusHtml = `<span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? (item.canceled ? '🚫 Canceled' : '⏰ Scheduled') : '✅ Sent'}</span>`;
+    if (isFuture) {
+        statusHtml += `<button class="cancel-job-btn" data-id="${item.jobId}">Cancel</button>`;
+    }
+    return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${ch === 'telegram' ? '📱 TG' : '💬 WA'}</span>${statusHtml}</div>`;
+}
+
 function renderHistory() {
     const history = getHistory();
     if (!history.length) { historyBody.innerHTML = '<p class="history-empty">No transfers yet.</p>'; return; }
-    historyBody.innerHTML = history.map(item => {
-        const files = (item.files || []).map(f => `<span>📎 ${escapeHTML(f)}</span>`).join('');
-        const ch = item.channel || 'telegram';
-        const isFuture = item.scheduledTime && new Date(item.scheduledTime) > new Date() && !item.canceled;
-        
-        let statusHtml = `<span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? (item.canceled ? '🚫 Canceled' : '⏰ Scheduled') : '✅ Sent'}</span>`;
-        if (isFuture) {
-            statusHtml += `<button class="cancel-job-btn" data-id="${item.jobId}">Cancel</button>`;
+
+    let html = '';
+    if (activeHistoryTab === 'messages') {
+        const msgs = history.filter(i => !i.scheduled);
+        if (!msgs.length) html = '<p class="history-empty">No instant messages.</p>';
+        else html = msgs.map(renderHistoryItem).join('');
+    } else {
+        const sched = history.filter(i => i.scheduled);
+        if (!sched.length) {
+            html = '<p class="history-empty">No scheduled jobs.</p>';
+        } else {
+            const active = [], completed = [], canceled = [];
+            const now = new Date();
+            sched.forEach(i => {
+                if (i.canceled) canceled.push(i);
+                else if (i.scheduledTime && new Date(i.scheduledTime) > now) active.push(i);
+                else completed.push(i);
+            });
+            if (active.length) html += `<div class="history-section-title">Active</div>` + active.map(renderHistoryItem).join('');
+            if (completed.length) html += `<div class="history-section-title">Completed</div>` + completed.map(renderHistoryItem).join('');
+            if (canceled.length) html += `<div class="history-section-title">Canceled</div>` + canceled.map(renderHistoryItem).join('');
         }
-        
-        return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${ch === 'telegram' ? '📱 TG' : '💬 WA'}</span>${statusHtml}</div>`;
-    }).join('');
+    }
+    historyBody.innerHTML = html;
 }
 
 historyBody.addEventListener('click', async (e) => {
