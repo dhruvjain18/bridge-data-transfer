@@ -94,7 +94,7 @@ app.use('/api/', (req, res, next) => {
 
 const upload = multer({
     dest: 'uploads/',
-    limits: { fileSize: 50 * 1024 * 1024 },
+    limits: { fileSize: 100 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const blocked = /\.(exe|bat|cmd|sh|ps1|vbs|js|msi|scr|com|pif|hta|cpl|inf|reg)$/i;
         if (blocked.test(file.originalname)) {
@@ -686,9 +686,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         if (textMessage.length > MAX_MESSAGE_LENGTH) { cleanupFiles(files); return res.status(400).json({ error: `Message too long. Max ${MAX_MESSAGE_LENGTH} chars.` }); }
         if (files.length === 0 && !textMessage.trim()) return res.status(400).json({ error: 'Provide a file or message.' });
 
-        const MAX_SIZE = 50 * 1024 * 1024;
+        const MAX_SIZE = channel === 'telegram' ? 50 * 1024 * 1024 : 100 * 1024 * 1024;
         const oversized = files.filter(f => f.size > MAX_SIZE);
-        if (oversized.length > 0) { cleanupFiles(files); return res.status(400).json({ error: `${oversized.length} file(s) exceed 50MB.` }); }
+        if (oversized.length > 0) { cleanupFiles(files); return res.status(400).json({ error: `${oversized.length} file(s) exceed ${channel === 'telegram' ? '50MB' : '100MB'}.` }); }
 
         log('INFO', 'Upload request', { channel, targets: targets.length, files: files.length, ip: requestIP });
 
