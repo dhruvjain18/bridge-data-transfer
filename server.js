@@ -229,30 +229,16 @@ async function saveUserMapping(username, chatId) {
 // ==============================
 const waDailyUsage = {};
 const WA_DAILY_LIMIT = 50;
-const waVerifiedSessions = {};
-const WA_SESSION_TTL = 2 * 60 * 60 * 1000;
 
-function checkDailyLimit(phone) {
-    const n = String(phone).replace(/[^\d]/g, '');
+function checkDailyLimit(sessionId) {
     const today = new Date().toISOString().split('T')[0];
-    if (!waDailyUsage[n] || waDailyUsage[n].date !== today) waDailyUsage[n] = { count: 0, date: today };
-    return waDailyUsage[n].count < WA_DAILY_LIMIT;
+    if (!waDailyUsage[sessionId] || waDailyUsage[sessionId].date !== today) waDailyUsage[sessionId] = { count: 0, date: today };
+    return waDailyUsage[sessionId].count < WA_DAILY_LIMIT;
 }
-function incrementDailyUsage(phone) {
-    const n = String(phone).replace(/[^\d]/g, '');
+function incrementDailyUsage(sessionId) {
     const today = new Date().toISOString().split('T')[0];
-    if (!waDailyUsage[n] || waDailyUsage[n].date !== today) waDailyUsage[n] = { count: 0, date: today };
-    waDailyUsage[n].count++;
-}
-function isSessionVerified(ip) {
-    const s = waVerifiedSessions[ip];
-    if (!s) return false;
-    if (Date.now() > s.expiresAt) { delete waVerifiedSessions[ip]; return false; }
-    return true;
-}
-function getVerifiedPhone(ip) {
-    const s = waVerifiedSessions[ip];
-    return s ? s.phone : null;
+    if (!waDailyUsage[sessionId] || waDailyUsage[sessionId].date !== today) waDailyUsage[sessionId] = { count: 0, date: today };
+    waDailyUsage[sessionId].count++;
 }
 
 const scheduledJobs = [];
@@ -577,21 +563,17 @@ try {
 // API ROUTES
 // ==============================
 
-// WhatsApp session — creates/restores per-user session (no whitelist gate)
+// WhatsApp session — creates/restores session by client-provided sessionId
 app.post('/api/whatsapp/verify', verifyLimiter, async (req, res) => {
-    const { phone } = req.body || {};
-    if (!phone) return res.json({ valid: false });
+    const { sessionId } = req.body || {};
+    if (!sessionId || String(sessionId).length < 5) return res.json({ valid: false });
 
-    const normalized = String(phone).replace(/[^\d]/g, '');
-    if (normalized.length < 8) return res.json({ valid: false });
+    const sid = String(sessionId).trim();
+    log('INFO', 'WhatsApp session requested', { sessionId: sid, ip: req.ip });
 
-    // Create verified session — QR scan is the real authentication
-    waVerifiedSessions[req.ip] = { phone: normalized, expiresAt: Date.now() + WA_SESSION_TTL };
-    log('INFO', 'WhatsApp session started', { phone: normalized.slice(-4).padStart(normalized.length, '*'), ip: req.ip });
-
-    // Create or restore Baileys session for this user
+    // Create or restore Baileys session
     if (db) {
-        const session = await createOrRestoreSession(normalized);
+        const session = await createOrRestoreSession(sid);
         if (!session) {
             return res.json({ valid: true, waError: 'Could not initialize WhatsApp session. Check server logs.' });
         }
@@ -604,18 +586,18 @@ app.get('/api/whatsapp/config', (req, res) => {
     res.json({ restricted: false });
 });
 
-// Per-user WhatsApp status
+// Per-user WhatsApp status — client provides sessionId
 app.get('/api/whatsapp/status', (req, res) => {
-    if (!isSessionVerified(req.ip)) {
-        return res.json({ ready: false, qr: null, error: 'Not verified' });
+    const sid = req.query.sessionId;
+    if (!sid) {
+        return res.json({ ready: false, qr: null, error: 'No session ID' });
     }
 
-    const phoneId = getVerifiedPhone(req.ip);
-    if (!phoneId || !db) {
+    if (!db) {
         return res.json({ ready: false, qr: null });
     }
 
-    const session = activeSessions.get(phoneId);
+    const session = activeSessions.get(sid);
     if (!session) {
         return res.json({ ready: false, qr: null });
     }
@@ -819,17 +801,11 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
         // ─── WHATSAPP ───
         } else if (channel === 'whatsapp') {
-            // Check session — QR scan is the real authentication
-            if (!isSessionVerified(requestIP)) {
-                cleanupFiles(files);
-                return res.status(403).json({ error: 'Session expired. Please scan the QR code again.' });
-            }
-
-            const sessionPhone = getVerifiedPhone(requestIP);
+            // Session ID comes from the client (stored in localStorage)
+            const sessionPhone = req.body.waSessionId;
             if (!sessionPhone) {
                 cleanupFiles(files);
-                delete waVerifiedSessions[requestIP];
-                return res.status(403).json({ error: 'No active WhatsApp session. Please reconnect.' });
+                return res.status(403).json({ error: 'No WhatsApp session. Please click the WhatsApp tab to connect.' });
             }
 
             // Check WhatsApp connection
