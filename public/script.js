@@ -11,6 +11,14 @@ const onboarding = document.getElementById('onboarding');
 const dismissBtn = document.getElementById('dismiss-btn');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIcon = document.getElementById('theme-icon');
+const qrShareBtn = document.getElementById('qr-share-btn');
+const shareModal = document.getElementById('share-modal');
+const shareModalClose = document.getElementById('share-modal-close');
+const shareQrImage = document.getElementById('share-qr-image');
+const previewModal = document.getElementById('preview-modal');
+const previewModalClose = document.getElementById('preview-modal-close');
+const previewImage = document.getElementById('preview-image');
+const previewPdf = document.getElementById('preview-pdf');
 const helpFab = document.getElementById('help-fab');
 const helpFabIcon = document.getElementById('help-fab-icon');
 const helpChat = document.getElementById('help-chat');
@@ -40,8 +48,9 @@ const countryCodeEl = document.getElementById('country-code');
 const countryDropdown = document.getElementById('country-dropdown');
 const phoneHint = document.getElementById('phone-hint');
 const mainContent = document.getElementById('main-content');
+const dropZoneText = document.getElementById('drop-zone-text');
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+let MAX_FILE_SIZE = 50 * 1024 * 1024;
 let selectedFiles = [];
 let activeChannel = 'telegram';
 let waPollingInterval = null;
@@ -208,13 +217,18 @@ function setChannel(channel) {
         whatsappInputDiv.classList.remove('hidden');
         mainContent.classList.remove('hidden');
         initWhatsAppSession();
+        MAX_FILE_SIZE = 100 * 1024 * 1024;
+        dropZoneText.textContent = 'or click to browse · max 100 MB · up to 10 files';
     } else {
         whatsappInputDiv.classList.add('hidden');
         mainContent.classList.remove('hidden');
         stopWaPolling();
         waQrOverlay.classList.add('hidden');
         waWasConnected = false;
+        MAX_FILE_SIZE = 50 * 1024 * 1024;
+        dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
     }
+    renderFileList();
     updateSendButton();
 }
 btnTelegram.addEventListener('click', () => setChannel('telegram'));
@@ -272,6 +286,14 @@ historyFab.addEventListener('click', () => { historyPanel.classList.toggle('hidd
 historyClose.addEventListener('click', () => { historyPanel.classList.add('hidden'); historyFab.classList.remove('active'); });
 historyClear.addEventListener('click', () => { localStorage.removeItem('bridge_history'); renderHistory(); });
 
+qrShareBtn.addEventListener('click', () => {
+    shareModal.classList.remove('hidden');
+    const url = encodeURIComponent(window.location.href);
+    shareQrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${url}`;
+});
+shareModalClose.addEventListener('click', () => shareModal.classList.add('hidden'));
+shareModal.addEventListener('click', (e) => { if (e.target === shareModal) shareModal.classList.add('hidden'); });
+
 function getHistory() { try { return JSON.parse(localStorage.getItem('bridge_history') || '[]'); } catch { return []; } }
 function saveHistory(h) { localStorage.setItem('bridge_history', JSON.stringify(h.slice(-50))); }
 function addHistoryEntry(e) { const h = getHistory(); h.unshift(e); saveHistory(h); }
@@ -319,20 +341,55 @@ function addFiles(fl) {
     if (selectedFiles.length > 10) { selectedFiles = selectedFiles.slice(0,10); showStatus('Max 10 files.', 'error'); }
     renderFileList();
 }
+previewModalClose.addEventListener('click', () => {
+    previewModal.classList.add('hidden');
+    previewPdf.src = '';
+    previewImage.src = '';
+});
+previewModal.addEventListener('click', (e) => {
+    if (e.target === previewModal) {
+        previewModal.classList.add('hidden');
+        previewPdf.src = '';
+        previewImage.src = '';
+    }
+});
+
 function renderFileList() {
     if (!selectedFiles.length) { fileListDiv.classList.add('hidden'); updateSendButton(); return; }
     fileListDiv.classList.remove('hidden'); fileListDiv.innerHTML = '';
     selectedFiles.forEach((file, i) => {
-        const over = file.size > MAX_FILE_SIZE; const isImg = file.type.startsWith('image/');
+        const over = file.size > MAX_FILE_SIZE; 
+        const isImg = file.type.startsWith('image/');
+        const isPdf = file.type === 'application/pdf';
+        
         const item = document.createElement('div'); item.className = `file-item${over ? ' oversized' : ''}`;
         const safeName = escapeHTML(file.name);
-        item.innerHTML = `${isImg ? `<img class="file-item-thumb" src="${URL.createObjectURL(file)}">` : ''}
+        
+        let thumbHtml = '';
+        if (isImg) thumbHtml = `<img class="file-item-thumb previewable" src="${URL.createObjectURL(file)}" data-index="${i}">`;
+        else if (isPdf) thumbHtml = `<div class="file-item-thumb previewable pdf-icon" data-index="${i}">📄</div>`;
+
+        item.innerHTML = `${thumbHtml}
             <div class="file-item-info"><span class="file-item-name" title="${safeName}">${safeName}</span>
             <span class="file-item-size">${over ? '<span class="zip-badge">Will auto-zip</span> ' : ''}${formatSize(file.size)}</span></div>
             <button class="file-item-remove" data-index="${i}">✕</button>`;
         fileListDiv.appendChild(item);
     });
+    
     fileListDiv.querySelectorAll('.file-item-remove').forEach(b => b.addEventListener('click', e => { selectedFiles.splice(parseInt(e.target.dataset.index),1); renderFileList(); }));
+    fileListDiv.querySelectorAll('.previewable').forEach(el => el.addEventListener('click', e => {
+        const file = selectedFiles[parseInt(e.currentTarget.dataset.index)];
+        if (file.type.startsWith('image/')) {
+            previewImage.src = URL.createObjectURL(file);
+            previewImage.classList.remove('hidden');
+            previewPdf.classList.add('hidden');
+        } else if (file.type === 'application/pdf') {
+            previewPdf.src = URL.createObjectURL(file);
+            previewPdf.classList.remove('hidden');
+            previewImage.classList.add('hidden');
+        }
+        previewModal.classList.remove('hidden');
+    }));
     updateSendButton();
 }
 
@@ -376,14 +433,20 @@ async function handleSend() {
         target = chatIdInput.value.trim();
         if (!target) { showStatus('Enter a Telegram username.', 'error'); chatIdInput.focus(); return; }
     } else {
-        const phoneVal = waPhoneInput.value.replace(/\D/g, '');
-        if (!phoneVal) { showStatus('Enter a phone number.', 'error'); waPhoneInput.focus(); return; }
-        if (phoneVal.length !== selectedCountry.digits) {
-            showStatus(`Phone number must be exactly ${selectedCountry.digits} digits for ${selectedCountry.name}.`, 'error');
-            waPhoneInput.focus();
-            return;
+        const rawPhones = waPhoneInput.value.split(',').map(s => s.trim()).filter(Boolean);
+        if (rawPhones.length === 0) { showStatus('Enter at least one phone number.', 'error'); waPhoneInput.focus(); return; }
+        
+        let validTargets = [];
+        for (const p of rawPhones) {
+            const digitsOnly = p.replace(/\D/g, '');
+            if (digitsOnly.length !== selectedCountry.digits) {
+                showStatus(`Number '${p}' must be exactly ${selectedCountry.digits} digits for ${selectedCountry.name}.`, 'error');
+                waPhoneInput.focus();
+                return;
+            }
+            validTargets.push(selectedCountry.code.replace('+', '') + digitsOnly);
         }
-        target = selectedCountry.code.replace('+', '') + phoneVal;
+        target = validTargets.join(',');
     }
 
     sendBtn.disabled = true;
