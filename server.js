@@ -563,6 +563,16 @@ app.get('/api/whatsapp/status', (req, res) => {
         qr: session.ready ? null : session.qr
     });
 });
+app.delete('/api/jobs/:id', (req, res) => {
+    const jobId = req.params.id;
+    const index = scheduledJobs.findIndex(j => j.id === jobId);
+    if (index === -1) {
+        return res.status(404).json({ error: 'Job not found or already executed' });
+    }
+    clearTimeout(scheduledJobs[index].timer);
+    scheduledJobs.splice(index, 1);
+    res.json({ success: true, message: 'Job canceled successfully' });
+});
 
 app.get('/api/users', (req, res) => {
     const users = Object.entries(userMap).map(([u, c]) => ({ username: `@${u}`, chatId: c }));
@@ -709,9 +719,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             }
 
             if (scheduledTime) {
-                const scheduleTelegramJob = (delayMs, currentScheduledTime) => {
+                const scheduleTelegramJob = (delayMs, currentScheduledTime, jobId) => {
                     if (delayMs < 0) return;
-                    const jobId = Date.now().toString(36);
+                    if (!jobId) jobId = Date.now().toString(36);
                     scheduledJobs.push({
                         id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
                         timer: setTimeout(async () => {
@@ -731,8 +741,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                 };
                 const initialDelayMs = new Date(scheduledTime).getTime() - Date.now();
                 if (initialDelayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
-                scheduleTelegramJob(initialDelayMs, scheduledTime);
-                return res.json({ success: true, scheduled: true, message: `Scheduled for ${resolved.length} recipient(s)!` });
+                const jobId = Date.now().toString(36);
+                scheduleTelegramJob(initialDelayMs, scheduledTime, jobId);
+                return res.json({ success: true, scheduled: true, jobId, message: `Scheduled for ${resolved.length} recipient(s)!` });
             }
 
             let totalSent = 0;
@@ -775,9 +786,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             const resolved = targets.map(t => ({ label: t, chatId: formatWhatsAppNumber(t) }));
 
             if (scheduledTime) {
-                const scheduleWAJob = (delayMs, currentScheduledTime) => {
+                const scheduleWAJob = (delayMs, currentScheduledTime, jobId) => {
                     if (delayMs < 0) return;
-                    const jobId = Date.now().toString(36);
+                    if (!jobId) jobId = Date.now().toString(36);
                     scheduledJobs.push({
                         id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
                         timer: setTimeout(async () => {
@@ -797,8 +808,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                 };
                 const initialDelayMs = new Date(scheduledTime).getTime() - Date.now();
                 if (initialDelayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
-                scheduleWAJob(initialDelayMs, scheduledTime);
-                return res.json({ success: true, scheduled: true, message: `Scheduled for ${resolved.length} recipient(s)!` });
+                const jobId = Date.now().toString(36);
+                scheduleWAJob(initialDelayMs, scheduledTime, jobId);
+                return res.json({ success: true, scheduled: true, jobId, message: `Scheduled for ${resolved.length} recipient(s)!` });
             }
 
             let totalSent = 0, allErrors = [];
