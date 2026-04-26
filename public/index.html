@@ -114,37 +114,14 @@
                 <button class="channel-btn" id="btn-whatsapp" data-channel="whatsapp">💬 WhatsApp</button>
             </div>
 
-            <!-- WhatsApp Session Area -->
-            <div class="wa-session-area hidden" id="wa-session-area">
-                <!-- Reconnect Option -->
-                <div class="wa-reconnect" id="wa-reconnect">
-                    <p class="wa-reconnect-link" id="wa-reconnect-toggle">🔗 Have a session code? <span>Click to reconnect</span></p>
-                    <div class="wa-reconnect-form hidden" id="wa-reconnect-form">
-                        <div class="wa-gate-input">
-                            <input type="text" id="wa-reconnect-code" placeholder="e.g. BRG-A7X9K2" autocomplete="off" maxlength="10" style="text-transform: uppercase; letter-spacing: 1px;">
-                            <button id="wa-reconnect-btn">Reconnect</button>
-                        </div>
-                        <p class="wa-reconnect-error hidden" id="wa-reconnect-error"></p>
-                    </div>
+            <!-- WhatsApp QR Overlay -->
+            <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
+                <p>Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
+                <div class="qr-box">
+                    <img id="wa-qr-image" src="" alt="QR" class="hidden">
+                    <div id="wa-qr-loading">Creating your session...</div>
                 </div>
-
-                <!-- QR Overlay -->
-                <div class="wa-qr-overlay" id="wa-qr-overlay">
-                    <p>Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
-                    <div class="qr-box">
-                        <img id="wa-qr-image" src="" alt="QR" class="hidden">
-                        <div id="wa-qr-loading">Creating your session...</div>
-                    </div>
-                    <p class="wa-qr-hint">One-time scan! You'll get a session code to reconnect from any browser.</p>
-                </div>
-
-                <!-- Session Code Display (shown after connection) -->
-                <div class="wa-session-code hidden" id="wa-session-code">
-                    <div class="wa-session-code-header">✅ WhatsApp Connected</div>
-                    <p>Your session code (save it to reconnect from other browsers):</p>
-                    <div class="wa-code-display" id="wa-code-display"></div>
-                    <p class="wa-qr-hint">This code lets you skip QR scanning on other devices & incognito.</p>
-                </div>
+                <p class="wa-qr-hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
             </div>
 
             <main id="main-content">
