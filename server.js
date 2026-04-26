@@ -66,7 +66,7 @@ const verifyLimiter = rateLimit({
 app.use('/api/', (req, res, next) => {
     // Exclude high-frequency polling endpoints from rate limiting
     const exempt = ['/whatsapp/status', '/whatsapp/config', '/admin/dashboard',
-                    '/admin/whitelist', '/admin/telegram-users', '/admin/scheduled', '/admin/logs'];
+                    '/admin/telegram-users', '/admin/logs'];
     if (exempt.some(p => req.path.startsWith(p))) return next();
     apiLimiter(req, res, next);
 });
@@ -134,51 +134,6 @@ async function connectDB() {
     }
 }
 
-// ==============================
-// WHATSAPP WHITELIST (MongoDB-backed with file fallback)
-// ==============================
-let waAllowedNumbers = [];
-const WA_ALLOWED_FILE = path.join(__dirname, 'whatsapp-allowed.json');
-
-async function loadWhitelist() {
-    if (db) {
-        try {
-            const doc = await db.collection('settings').findOne({ _id: 'wa_whitelist' });
-            if (doc && doc.numbers && doc.numbers.length > 0) {
-                waAllowedNumbers = doc.numbers.map(n => String(n).replace(/[^\d]/g, '')).filter(Boolean);
-                log('INFO', `WhatsApp whitelist from DB: ${waAllowedNumbers.length} number(s)`);
-                return;
-            }
-        } catch (e) { log('ERROR', `DB whitelist load failed: ${e.message}`); }
-    }
-    // File fallback
-    try {
-        if (fs.existsSync(WA_ALLOWED_FILE)) {
-            waAllowedNumbers = JSON.parse(fs.readFileSync(WA_ALLOWED_FILE, 'utf-8'))
-                .map(n => String(n).replace(/[^\d]/g, '')).filter(Boolean);
-            log('INFO', `WhatsApp whitelist from file: ${waAllowedNumbers.length} number(s)`);
-            if (db) await saveWhitelistToDB(); // Migrate to DB
-        } else {
-            log('WARN', 'No WhatsApp whitelist found — WhatsApp LOCKED');
-        }
-    } catch (e) { log('ERROR', `File whitelist load failed: ${e.message}`); }
-}
-
-async function saveWhitelistToDB() {
-    if (!db) {
-        fs.writeFileSync(WA_ALLOWED_FILE, JSON.stringify(waAllowedNumbers, null, 2));
-        return;
-    }
-    await db.collection('settings').updateOne(
-        { _id: 'wa_whitelist' }, { $set: { numbers: waAllowedNumbers, updatedAt: new Date() } }, { upsert: true }
-    );
-}
-
-function isWaAllowed(phone) {
-    if (waAllowedNumbers.length === 0) return false;
-    const normalized = String(phone).replace(/[^\d]/g, '');
-    return waAllowedNumbers.includes(normalized);
-}
 
 // ==============================
 // TELEGRAM USER MAP (MongoDB-backed with file fallback)
@@ -650,54 +605,31 @@ app.post('/api/admin/verify', (req, res) => {
     return res.json({ valid: false });
 });
 
-app.get('/api/admin/dashboard', adminAuth, (req, res) => {
+app.get('/api/admin/dashboard', adminAuth, async (req, res) => {
     const uptimeSec = Math.round(process.uptime());
     const hours = Math.floor(uptimeSec / 3600);
     const mins = Math.floor((uptimeSec % 3600) / 60);
+
+    // Count total authenticated WA sessions from MongoDB
+    let totalAuthenticated = 0;
+    if (db) {
+        try {
+            // Each authenticated session has a 'creds' document
+            totalAuthenticated = await db.collection('wa_auth').countDocuments({ _id: { $regex: /:creds$/ } });
+        } catch (e) { log('ERROR', `Failed to count WA sessions: ${e.message}`); }
+    }
+
     res.json({
         uptime: `${hours}h ${mins}m`,
         telegram: { connected: !!telegramBot, users: Object.keys(userMap).length },
-        whatsapp: { activeSessions: activeSessions.size, allowedNumbers: waAllowedNumbers.length, mongodb: !!db },
-        scheduledJobs: scheduledJobs.length,
+        whatsapp: { activeSessions: activeSessions.size, totalAuthenticated, mongodb: !!db },
         memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024)
     });
-});
-
-app.get('/api/admin/whitelist', adminAuth, (req, res) => {
-    res.json({ numbers: waAllowedNumbers });
-});
-
-app.post('/api/admin/whitelist/add', adminAuth, async (req, res) => {
-    const { phone } = req.body || {};
-    if (!phone) return res.status(400).json({ error: 'Phone number required.' });
-    const normalized = String(phone).replace(/[^\d]/g, '');
-    if (normalized.length < 8) return res.status(400).json({ error: 'Invalid phone number.' });
-    if (waAllowedNumbers.includes(normalized)) return res.json({ success: true, message: 'Already whitelisted.' });
-    waAllowedNumbers.push(normalized);
-    await saveWhitelistToDB();
-    log('INFO', `Admin added ${normalized} to whitelist`);
-    res.json({ success: true, message: `${normalized} added.` });
-});
-
-app.post('/api/admin/whitelist/remove', adminAuth, async (req, res) => {
-    const { phone } = req.body || {};
-    if (!phone) return res.status(400).json({ error: 'Phone number required.' });
-    const normalized = String(phone).replace(/[^\d]/g, '');
-    const index = waAllowedNumbers.indexOf(normalized);
-    if (index === -1) return res.status(404).json({ error: 'Number not found.' });
-    waAllowedNumbers.splice(index, 1);
-    await saveWhitelistToDB();
-    log('INFO', `Admin removed ${normalized} from whitelist`);
-    res.json({ success: true, message: `${normalized} removed.` });
 });
 
 app.get('/api/admin/telegram-users', adminAuth, (req, res) => {
     const users = Object.entries(userMap).map(([u, c]) => ({ username: `@${u}`, chatId: c }));
     res.json({ users });
-});
-
-app.get('/api/admin/scheduled', adminAuth, (req, res) => {
-    res.json({ jobs: scheduledJobs.map(j => ({ id: j.id, targets: j.targets, fileCount: j.fileCount, scheduledFor: j.scheduledFor })) });
 });
 
 app.get('/api/admin/logs', adminAuth, (req, res) => {
@@ -874,12 +806,11 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 // ==============================
 async function startServer() {
     await connectDB();
-    await loadWhitelist();
     await loadUserMap();
 
     app.listen(port, () => {
         log('INFO', `Bridge Server running at http://localhost:${port}`);
-        log('INFO', `MongoDB: ${db ? 'connected' : 'file-fallback'} | Telegram: ${telegramBot ? 'active' : 'disabled'} | WA whitelist: ${waAllowedNumbers.length}`);
+        log('INFO', `MongoDB: ${db ? 'connected' : 'file-fallback'} | Telegram: ${telegramBot ? 'active' : 'disabled'} | WA: open (QR auth)`);
     });
 }
 
