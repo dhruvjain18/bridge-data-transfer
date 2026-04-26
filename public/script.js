@@ -287,7 +287,17 @@ helpFab.addEventListener('click', () => {
 helpChatClose.addEventListener('click', () => { helpChat.classList.add('hidden'); helpFab.classList.remove('active'); helpFabIcon.textContent = '?'; });
 historyFab.addEventListener('click', () => { historyPanel.classList.toggle('hidden'); historyFab.classList.toggle('active'); renderHistory(); });
 historyClose.addEventListener('click', () => { historyPanel.classList.add('hidden'); historyFab.classList.remove('active'); });
-historyClear.addEventListener('click', () => { localStorage.removeItem('bridge_history'); renderHistory(); });
+historyClear.addEventListener('click', () => {
+    const h = getHistory();
+    const now = new Date();
+    // Keep only jobs that are scheduled for the future and haven't been canceled
+    const activeJobs = h.filter(i => i.scheduled && !i.canceled && i.scheduledTime && new Date(i.scheduledTime) > now);
+    saveHistory(activeJobs);
+    renderHistory();
+    if (h.length > activeJobs.length) {
+        showStatus('History cleared (active jobs preserved).', 'success');
+    }
+});
 
 function getHistory() { try { return JSON.parse(localStorage.getItem('bridge_history') || '[]'); } catch { return []; } }
 function saveHistory(h) { localStorage.setItem('bridge_history', JSON.stringify(h.slice(-50))); }
