@@ -678,6 +678,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         const rawTargets = sanitizeInput(req.body.chatId || '');
         const textMessage = sanitizeInput(req.body.message || '');
         const scheduledTime = req.body.scheduledTime || '';
+        const cyclePeriod = req.body.cyclePeriod || 'none';
 
         const targets = rawTargets.split(',').map(t => t.trim()).filter(Boolean);
 
@@ -708,17 +709,29 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             }
 
             if (scheduledTime) {
-                const delayMs = new Date(scheduledTime).getTime() - Date.now();
-                if (delayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
-                const jobId = Date.now().toString(36);
-                scheduledJobs.push({
-                    id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(scheduledTime).toISOString(),
-                    timer: setTimeout(async () => {
-                        for (const t of resolved) await sendTelegram(t.chatId, textMessage, files);
-                        cleanupFiles(files);
-                        scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
-                    }, delayMs)
-                });
+                const scheduleTelegramJob = (delayMs, currentScheduledTime) => {
+                    if (delayMs < 0) return;
+                    const jobId = Date.now().toString(36);
+                    scheduledJobs.push({
+                        id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
+                        timer: setTimeout(async () => {
+                            for (const t of resolved) await sendTelegram(t.chatId, textMessage, files);
+                            scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
+                            if (cyclePeriod !== 'none') {
+                                const nextDate = new Date();
+                                if (cyclePeriod === 'daily') nextDate.setDate(nextDate.getDate() + 1);
+                                else if (cyclePeriod === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
+                                else if (cyclePeriod === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+                                scheduleTelegramJob(nextDate.getTime() - Date.now(), nextDate);
+                            } else {
+                                cleanupFiles(files);
+                            }
+                        }, delayMs)
+                    });
+                };
+                const initialDelayMs = new Date(scheduledTime).getTime() - Date.now();
+                if (initialDelayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
+                scheduleTelegramJob(initialDelayMs, scheduledTime);
                 return res.json({ success: true, scheduled: true, message: `Scheduled for ${resolved.length} recipient(s)!` });
             }
 
@@ -762,17 +775,29 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             const resolved = targets.map(t => ({ label: t, chatId: formatWhatsAppNumber(t) }));
 
             if (scheduledTime) {
-                const delayMs = new Date(scheduledTime).getTime() - Date.now();
-                if (delayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
-                const jobId = Date.now().toString(36);
-                scheduledJobs.push({
-                    id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(scheduledTime).toISOString(),
-                    timer: setTimeout(async () => {
-                        for (const t of resolved) await sendWhatsApp(sessionPhone, t.chatId, textMessage, files);
-                        cleanupFiles(files);
-                        scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
-                    }, delayMs)
-                });
+                const scheduleWAJob = (delayMs, currentScheduledTime) => {
+                    if (delayMs < 0) return;
+                    const jobId = Date.now().toString(36);
+                    scheduledJobs.push({
+                        id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
+                        timer: setTimeout(async () => {
+                            for (const t of resolved) await sendWhatsApp(sessionPhone, t.chatId, textMessage, files);
+                            scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
+                            if (cyclePeriod !== 'none') {
+                                const nextDate = new Date();
+                                if (cyclePeriod === 'daily') nextDate.setDate(nextDate.getDate() + 1);
+                                else if (cyclePeriod === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
+                                else if (cyclePeriod === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+                                scheduleWAJob(nextDate.getTime() - Date.now(), nextDate);
+                            } else {
+                                cleanupFiles(files);
+                            }
+                        }, delayMs)
+                    });
+                };
+                const initialDelayMs = new Date(scheduledTime).getTime() - Date.now();
+                if (initialDelayMs < 0) { cleanupFiles(files); return res.status(400).json({ error: 'Scheduled time must be in the future.' }); }
+                scheduleWAJob(initialDelayMs, scheduledTime);
                 return res.json({ success: true, scheduled: true, message: `Scheduled for ${resolved.length} recipient(s)!` });
             }
 
