@@ -8,12 +8,14 @@
     <meta name="theme-color" content="#0088cc">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌉</text></svg>">
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <button class="admin-toggle" id="admin-toggle" title="Admin Panel">⚙️</button>
     <button class="theme-toggle" id="theme-toggle" title="Toggle theme"><span class="theme-icon" id="theme-icon">🌙</span></button>
+    <button class="qr-share-btn" id="qr-share-btn" title="Share via QR">📱</button>
     <button class="help-fab" id="help-fab" title="Help & FAQ"><span class="help-fab-icon" id="help-fab-icon">?</span></button>
     <button class="history-fab" id="history-fab" title="Transfer History">🕘</button>
 
@@ -136,7 +138,7 @@
 
                 <!-- WhatsApp input -->
                 <div class="input-group hidden" id="whatsapp-input">
-                    <label for="waPhone">Recipient's Phone Number</label>
+                    <label for="waPhone">Recipient Phone Number(s) <span class="optional">(comma separated)</span></label>
                     <div class="phone-input-wrapper">
                         <div class="country-selector" id="country-selector">
                             <button class="country-btn" id="country-btn" type="button">
@@ -146,7 +148,7 @@
                             </button>
                             <div class="country-dropdown hidden" id="country-dropdown"></div>
                         </div>
-                        <input type="tel" id="waPhone" placeholder="9876543210" autocomplete="off" maxlength="10">
+                        <input type="tel" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off">
                     </div>
                     <p class="phone-hint" id="phone-hint"></p>
                 </div>
@@ -173,7 +175,7 @@
                         </svg>
                     </div>
                     <h3>Drag & Drop files here</h3>
-                    <p>or click to browse · max 50 MB · up to 10 files</p>
+                    <p id="drop-zone-text">or click to browse · max 50 MB · up to 10 files</p>
                     <input type="file" id="file-input" class="hidden" multiple>
                 </div>
 
@@ -195,6 +197,28 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <!-- File Preview Modal -->
+    <div class="preview-modal hidden" id="preview-modal">
+        <button class="preview-modal-close" id="preview-modal-close">✕</button>
+        <div class="preview-modal-content">
+            <img id="preview-image" src="" alt="File Preview" class="hidden">
+            <iframe id="preview-pdf" src="" class="hidden"></iframe>
+        </div>
+    </div>
+
+    <!-- Share QR Modal -->
+    <div class="share-modal hidden" id="share-modal">
+        <div class="share-modal-content">
+            <button class="share-modal-close" id="share-modal-close">✕</button>
+            <h3>Scan to open on mobile</h3>
+            <div class="share-qr-container">
+                <img id="share-qr-image" src="" alt="Share QR Code">
+            </div>
+            <p>Scan this QR code with your phone's camera to open Bridge.</p>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>
