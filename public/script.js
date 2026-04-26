@@ -226,6 +226,19 @@ btnWhatsapp.addEventListener('click', () => setChannel('whatsapp'));
 function startWaPolling() { stopWaPolling(); checkWaStatus(); waPollingInterval = setInterval(checkWaStatus, 3000); }
 function stopWaPolling() { if (waPollingInterval) { clearInterval(waPollingInterval); waPollingInterval = null; } }
 let waWasConnected = false;
+
+const topToast = document.getElementById('top-toast');
+let topToastTimer = null;
+function showTopToast(text, type = 'success', duration = 4000) {
+    clearTimeout(topToastTimer);
+    topToast.textContent = text;
+    topToast.className = `top-toast ${type}`;
+    topToastTimer = setTimeout(() => {
+        topToast.classList.add('hiding');
+        setTimeout(() => topToast.classList.add('hidden'), 300);
+    }, duration);
+}
+
 async function checkWaStatus() {
     try {
         const sid = localStorage.getItem('bridge_wa_session_phone') || '';
@@ -236,7 +249,7 @@ async function checkWaStatus() {
             stopWaPolling();
             if (!waWasConnected) {
                 waWasConnected = true;
-                showStatus('✅ WhatsApp connected! You can now send messages.', 'success');
+                showTopToast('✅ WhatsApp connected — ready to send!');
             }
         } else {
             waWasConnected = false;
