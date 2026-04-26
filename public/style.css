@@ -69,45 +69,6 @@ body {
 .admin-toggle:hover { transform: scale(1.1); border-color: var(--accent); }
 .admin-toggle.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 
-.qr-share-btn {
-    position: fixed; top: 20px; right: 130px; z-index: 100;
-    width: 42px; height: 42px; border-radius: 50%;
-    border: 1px solid var(--border-color); background: var(--surface);
-    backdrop-filter: blur(12px); cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s ease; box-shadow: 0 2px 10px var(--shadow);
-    font-size: 20px;
-}
-.qr-share-btn:hover { transform: scale(1.1); border-color: var(--whatsapp); }
-
-/* Share Modal */
-.share-modal {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999;
-    background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: center;
-    animation: fadeIn 0.2s ease;
-}
-.share-modal.hidden { display: none; }
-.share-modal-content {
-    background: var(--bg-color); border: 1px solid var(--border-color);
-    border-radius: 24px; padding: 30px; width: 340px; text-align: center;
-    box-shadow: 0 20px 60px var(--shadow); position: relative;
-    animation: slideUp 0.3s ease;
-}
-.share-modal-close {
-    position: absolute; top: 16px; right: 16px; background: none; border: none;
-    color: var(--text-secondary); font-size: 20px; cursor: pointer;
-    transition: color 0.2s;
-}
-.share-modal-close:hover { color: var(--text-primary); }
-.share-modal-content h3 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
-.share-qr-container {
-    background: white; padding: 16px; border-radius: 16px; display: inline-block;
-    margin-bottom: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-}
-.share-qr-container img { display: block; width: 200px; height: 200px; }
-.share-modal-content p { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-
 /* File Preview Modal */
 .preview-modal {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999;
