@@ -66,7 +66,7 @@ async function initWhatsAppSession() {
         const res = await fetch('/api/whatsapp/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone: sessionPhone })
+            body: JSON.stringify({ sessionId: sessionPhone })
         });
         const data = await res.json();
         if (data.valid) {
@@ -226,7 +226,8 @@ function startWaPolling() { stopWaPolling(); checkWaStatus(); waPollingInterval 
 function stopWaPolling() { if (waPollingInterval) { clearInterval(waPollingInterval); waPollingInterval = null; } }
 async function checkWaStatus() {
     try {
-        const res = await fetch('/api/whatsapp/status');
+        const sid = localStorage.getItem('bridge_wa_session_phone') || '';
+        const res = await fetch(`/api/whatsapp/status?sessionId=${encodeURIComponent(sid)}`);
         const data = await res.json();
         if (data.ready) { waQrOverlay.classList.add('hidden'); stopWaPolling(); }
         else {
@@ -375,9 +376,9 @@ async function handleSend() {
     if (isScheduled && scheduleTime.value) formData.append('scheduledTime', new Date(scheduleTime.value).toISOString());
     filesToSend.forEach(f => formData.append('files', f));
 
-    // Send verified phone for server-side whitelist check
+    // Send session ID for server-side session lookup
     if (activeChannel === 'whatsapp' && verifiedPhone) {
-        formData.append('waVerifiedPhone', verifiedPhone);
+        formData.append('waSessionId', verifiedPhone);
     }
 
     progressContainer.classList.remove('hidden');
