@@ -372,6 +372,7 @@ header p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
 .channel-btn.active[data-channel="whatsapp"] { border-color: var(--whatsapp); background: var(--whatsapp-glow); color: var(--whatsapp); box-shadow: 0 0 0 2px var(--whatsapp-glow); }
 
 /* WhatsApp QR Overlay */
+.wa-session-area.hidden { display: none; }
 .wa-qr-overlay { text-align: center; padding: 24px 16px; margin-bottom: 18px; border: 1px solid var(--whatsapp); border-radius: 16px; background: var(--whatsapp-glow); animation: fadeIn 0.3s; }
 .wa-qr-overlay.hidden { display: none; }
 .wa-qr-overlay p { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
@@ -379,6 +380,43 @@ header p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
 .qr-box { width: 220px; height: 220px; margin: 0 auto; background: white; border-radius: 14px; display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 .qr-box img { width: 100%; height: auto; }
 #wa-qr-loading { color: #333; font-size: 13px; font-weight: 600; }
+
+/* Reconnect Link */
+.wa-reconnect { text-align: center; margin-bottom: 14px; }
+.wa-reconnect-link {
+    font-size: 13px; color: var(--text-secondary); cursor: pointer;
+    transition: color 0.2s; display: inline-block;
+}
+.wa-reconnect-link:hover { color: var(--whatsapp); }
+.wa-reconnect-link span { color: var(--whatsapp); font-weight: 600; text-decoration: underline; }
+.wa-reconnect-form { margin-top: 12px; animation: fadeIn 0.2s; }
+.wa-reconnect-form.hidden { display: none; }
+.wa-reconnect-error {
+    font-size: 12px; color: var(--danger); margin-top: 10px; margin-bottom: 0;
+    animation: fadeIn 0.2s;
+}
+.wa-reconnect-error.hidden { display: none; }
+
+/* Session Code Display */
+.wa-session-code {
+    text-align: center; padding: 20px 16px; margin-bottom: 18px;
+    border: 1px solid var(--whatsapp); border-radius: 16px;
+    background: var(--whatsapp-glow); animation: fadeIn 0.3s;
+}
+.wa-session-code.hidden { display: none; }
+.wa-session-code-header {
+    font-size: 16px; font-weight: 700; color: var(--whatsapp);
+    margin-bottom: 8px;
+}
+.wa-session-code p { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+.wa-code-display {
+    display: inline-block; padding: 12px 28px;
+    background: var(--bg-color); border: 2px solid var(--whatsapp);
+    border-radius: 12px; font-size: 22px; font-weight: 700;
+    font-family: 'Courier New', monospace; letter-spacing: 3px;
+    color: var(--whatsapp); user-select: all; cursor: pointer;
+}
+.wa-code-display:hover { box-shadow: 0 0 0 3px var(--whatsapp-glow); }
 
 /* Inputs */
 .input-group { margin-bottom: 18px; }
