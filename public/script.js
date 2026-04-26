@@ -34,14 +34,6 @@ const whatsappInputDiv = document.getElementById('whatsapp-input');
 const waQrOverlay = document.getElementById('wa-qr-overlay');
 const waQrImage = document.getElementById('wa-qr-image');
 const waQrLoading = document.getElementById('wa-qr-loading');
-const waSessionArea = document.getElementById('wa-session-area');
-const waReconnectToggle = document.getElementById('wa-reconnect-toggle');
-const waReconnectForm = document.getElementById('wa-reconnect-form');
-const waReconnectCode = document.getElementById('wa-reconnect-code');
-const waReconnectBtn = document.getElementById('wa-reconnect-btn');
-const waReconnectError = document.getElementById('wa-reconnect-error');
-const waSessionCode = document.getElementById('wa-session-code');
-const waCodeDisplay = document.getElementById('wa-code-display');
 const countryBtn = document.getElementById('country-btn');
 const countryFlag = document.getElementById('country-flag');
 const countryCodeEl = document.getElementById('country-code');
@@ -215,13 +207,13 @@ function setChannel(channel) {
     if (channel === 'whatsapp') {
         whatsappInputDiv.classList.remove('hidden');
         mainContent.classList.remove('hidden');
-        waSessionArea.classList.remove('hidden');
         initWhatsAppSession();
     } else {
         whatsappInputDiv.classList.add('hidden');
         mainContent.classList.remove('hidden');
         stopWaPolling();
-        waSessionArea.classList.add('hidden');
+        waQrOverlay.classList.add('hidden');
+        waWasConnected = false;
     }
     updateSendButton();
 }
@@ -233,6 +225,7 @@ btnWhatsapp.addEventListener('click', () => setChannel('whatsapp'));
 // ==============================
 function startWaPolling() { stopWaPolling(); checkWaStatus(); waPollingInterval = setInterval(checkWaStatus, 3000); }
 function stopWaPolling() { if (waPollingInterval) { clearInterval(waPollingInterval); waPollingInterval = null; } }
+let waWasConnected = false;
 async function checkWaStatus() {
     try {
         const sid = localStorage.getItem('bridge_wa_session_phone') || '';
@@ -241,72 +234,17 @@ async function checkWaStatus() {
         if (data.ready) {
             waQrOverlay.classList.add('hidden');
             stopWaPolling();
-            // Show session code if available
-            if (data.reconnectCode) {
-                waSessionCode.classList.remove('hidden');
-                waCodeDisplay.textContent = data.reconnectCode;
-                // Also hide the reconnect form since we're connected
-                waReconnectForm.classList.add('hidden');
+            if (!waWasConnected) {
+                waWasConnected = true;
+                showStatus('✅ WhatsApp connected! You can now send messages.', 'success');
             }
         } else {
-            waSessionCode.classList.add('hidden');
+            waWasConnected = false;
             waQrOverlay.classList.remove('hidden');
             if (data.qr) { waQrImage.src = data.qr; waQrImage.classList.remove('hidden'); waQrLoading.classList.add('hidden'); }
             else { waQrImage.classList.add('hidden'); waQrLoading.classList.remove('hidden'); }
         }
     } catch (e) {}
-}
-
-// ==============================
-// WHATSAPP RECONNECT
-// ==============================
-waReconnectToggle.addEventListener('click', () => {
-    waReconnectForm.classList.toggle('hidden');
-    if (!waReconnectForm.classList.contains('hidden')) waReconnectCode.focus();
-});
-
-waReconnectBtn.addEventListener('click', handleReconnect);
-waReconnectCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleReconnect(); });
-
-async function handleReconnect() {
-    const code = waReconnectCode.value.trim().toUpperCase();
-    if (!code || code.length < 4) {
-        waReconnectError.textContent = 'Enter a valid session code (e.g. BRG-A7X9K2).';
-        waReconnectError.classList.remove('hidden');
-        return;
-    }
-
-    waReconnectBtn.textContent = 'Reconnecting...';
-    waReconnectBtn.disabled = true;
-    waReconnectError.classList.add('hidden');
-
-    try {
-        const res = await fetch('/api/whatsapp/reconnect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code })
-        });
-        const data = await res.json();
-
-        if (data.valid && data.sessionId) {
-            // Save the restored session ID
-            localStorage.setItem('bridge_wa_session_phone', data.sessionId);
-            verifiedPhone = data.sessionId;
-            waAccessVerified = true;
-            waReconnectForm.classList.add('hidden');
-            startWaPolling();
-            showStatus('✅ Session reconnected! WhatsApp is ready.', 'success');
-        } else {
-            waReconnectError.textContent = data.error || 'Session code not found.';
-            waReconnectError.classList.remove('hidden');
-        }
-    } catch (e) {
-        waReconnectError.textContent = 'Connection error. Try again.';
-        waReconnectError.classList.remove('hidden');
-    }
-
-    waReconnectBtn.textContent = 'Reconnect';
-    waReconnectBtn.disabled = false;
 }
 
 // ==============================
