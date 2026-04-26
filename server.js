@@ -577,26 +577,17 @@ try {
 // API ROUTES
 // ==============================
 
-// WhatsApp verification — creates/restores per-user session
+// WhatsApp session — creates/restores per-user session (no whitelist gate)
 app.post('/api/whatsapp/verify', verifyLimiter, async (req, res) => {
     const { phone } = req.body || {};
     if (!phone) return res.json({ valid: false });
 
-    if (waAllowedNumbers.length === 0) {
-        log('WARN', 'WhatsApp denied (no whitelist)', { ip: req.ip });
-        return res.json({ valid: false });
-    }
-
-    if (!isWaAllowed(phone)) {
-        log('WARN', 'WhatsApp denied (not whitelisted)', { ip: req.ip });
-        return res.json({ valid: false });
-    }
-
     const normalized = String(phone).replace(/[^\d]/g, '');
+    if (normalized.length < 8) return res.json({ valid: false });
 
-    // Create verified session
+    // Create verified session — QR scan is the real authentication
     waVerifiedSessions[req.ip] = { phone: normalized, expiresAt: Date.now() + WA_SESSION_TTL };
-    log('INFO', 'WhatsApp access granted', { phone: normalized.slice(-4).padStart(normalized.length, '*'), ip: req.ip });
+    log('INFO', 'WhatsApp session started', { phone: normalized.slice(-4).padStart(normalized.length, '*'), ip: req.ip });
 
     // Create or restore Baileys session for this user
     if (db) {
@@ -610,7 +601,7 @@ app.post('/api/whatsapp/verify', verifyLimiter, async (req, res) => {
 });
 
 app.get('/api/whatsapp/config', (req, res) => {
-    res.json({ restricted: true });
+    res.json({ restricted: false });
 });
 
 // Per-user WhatsApp status
@@ -828,17 +819,17 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
         // ─── WHATSAPP ───
         } else if (channel === 'whatsapp') {
-            // SECURITY: Verify session
+            // Check session — QR scan is the real authentication
             if (!isSessionVerified(requestIP)) {
                 cleanupFiles(files);
-                return res.status(403).json({ error: 'Session expired. Please verify your phone number again.' });
+                return res.status(403).json({ error: 'Session expired. Please scan the QR code again.' });
             }
 
             const sessionPhone = getVerifiedPhone(requestIP);
-            if (!sessionPhone || !isWaAllowed(sessionPhone)) {
+            if (!sessionPhone) {
                 cleanupFiles(files);
                 delete waVerifiedSessions[requestIP];
-                return res.status(403).json({ error: 'Your number is no longer authorized.' });
+                return res.status(403).json({ error: 'No active WhatsApp session. Please reconnect.' });
             }
 
             // Check WhatsApp connection
@@ -852,17 +843,6 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             if (!checkDailyLimit(sessionPhone)) {
                 cleanupFiles(files);
                 return res.status(429).json({ error: `Daily limit reached (${WA_DAILY_LIMIT}/day). Try tomorrow.` });
-            }
-
-            // Recipient restriction — only whitelisted numbers
-            for (const t of targets) {
-                const rn = String(t).replace(/\D/g, '');
-                const fullNum = rn.length === 10 ? '91' + rn : rn;
-                if (!waAllowedNumbers.includes(fullNum)) {
-                    cleanupFiles(files);
-                    log('WARN', `Blocked send to non-whitelisted: ${fullNum}`, { sender: sessionPhone, ip: requestIP });
-                    return res.status(403).json({ error: `Recipient ${t} is not authorized. Only whitelisted numbers allowed.` });
-                }
             }
 
             // Audit log
