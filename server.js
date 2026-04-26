@@ -381,6 +381,20 @@ async function createOrRestoreSession(phoneId) {
                 session.qr = null;
                 sessionRetries.delete(phoneId);
                 log('INFO', `WhatsApp connected for user ${phoneId}`);
+
+                // Generate and store a short reconnect code
+                if (db && !session.reconnectCode) {
+                    const code = generateReconnectCode();
+                    session.reconnectCode = code;
+                    try {
+                        await db.collection('wa_auth').updateOne(
+                            { _id: `${phoneId}:meta` },
+                            { $set: { value: JSON.stringify({ reconnectCode: code, sessionId: phoneId, connectedAt: new Date() }), sessionId: phoneId, updatedAt: new Date() } },
+                            { upsert: true }
+                        );
+                        log('INFO', `Reconnect code for ${phoneId}: ${code}`);
+                    } catch (e) { log('ERROR', `Failed to save reconnect code: ${e.message}`); }
+                }
             }
 
             if (connection === 'close') {
@@ -431,6 +445,13 @@ setInterval(() => {
 // ==============================
 // HELPERS
 // ==============================
+function generateReconnectCode() {
+    // Generate a short, readable code like "BRG-A7X9K2"
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L for readability
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return `BRG-${code}`;
+}
 function resolveTelegramTarget(target) {
     target = target.trim();
     if (/^\d+$/.test(target)) return target;
@@ -537,6 +558,37 @@ app.post('/api/whatsapp/verify', verifyLimiter, async (req, res) => {
     return res.json({ valid: true });
 });
 
+// Reconnect using a session code (for cross-browser / incognito)
+app.post('/api/whatsapp/reconnect', verifyLimiter, async (req, res) => {
+    const { code } = req.body || {};
+    if (!code || String(code).length < 4) return res.json({ valid: false, error: 'Enter a valid session code.' });
+
+    const normalizedCode = String(code).trim().toUpperCase();
+    if (!db) return res.json({ valid: false, error: 'Database not connected.' });
+
+    try {
+        // Search for the meta document with this reconnect code
+        const docs = await db.collection('wa_auth').find({ _id: { $regex: /:meta$/ } }).toArray();
+        for (const doc of docs) {
+            try {
+                const meta = JSON.parse(doc.value);
+                if (meta.reconnectCode === normalizedCode && meta.sessionId) {
+                    // Found a matching session — restore it
+                    const session = await createOrRestoreSession(meta.sessionId);
+                    if (session) {
+                        log('INFO', `Session reconnected via code ${normalizedCode}`, { sessionId: meta.sessionId });
+                        return res.json({ valid: true, sessionId: meta.sessionId });
+                    }
+                }
+            } catch (e) {}
+        }
+        return res.json({ valid: false, error: 'Session code not found. Please scan a new QR code.' });
+    } catch (e) {
+        log('ERROR', `Reconnect lookup failed: ${e.message}`);
+        return res.json({ valid: false, error: 'Server error. Try again.' });
+    }
+});
+
 app.get('/api/whatsapp/config', (req, res) => {
     res.json({ restricted: false });
 });
@@ -560,7 +612,8 @@ app.get('/api/whatsapp/status', (req, res) => {
     session.lastActivity = Date.now();
     res.json({
         ready: session.ready,
-        qr: session.ready ? null : session.qr
+        qr: session.ready ? null : session.qr,
+        reconnectCode: session.ready ? (session.reconnectCode || null) : null
     });
 });
 
