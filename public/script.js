@@ -57,6 +57,12 @@ let waPollingInterval = null;
 let waAccessVerified = false;
 let verifiedPhone = '';
 
+const channelState = {
+    telegram: { message: '', files: [] },
+    whatsapp: { message: '', files: [] },
+    email: { message: '', files: [] }
+};
+
 // ==============================
 // WHATSAPP SESSION INIT (QR scan = authentication)
 // ==============================
@@ -215,6 +221,10 @@ function escapeHTML(str) {
 // CHANNEL
 // ==============================
 function setChannel(channel) {
+    // Save current state before switching
+    channelState[activeChannel].message = messageInput.value;
+    channelState[activeChannel].files = [...selectedFiles];
+
     activeChannel = channel;
     document.body.setAttribute('data-active-channel', channel);
     btnTelegram.classList.toggle('active', channel === 'telegram');
@@ -224,7 +234,10 @@ function setChannel(channel) {
     telegramInputDiv.classList.toggle('hidden', channel !== 'telegram');
     whatsappInputDiv.classList.toggle('hidden', channel !== 'whatsapp');
     emailInputDiv.classList.toggle('hidden', channel !== 'email');
-    messageInput.value = ''; // clear message when switching channel
+    
+    // Restore state for the new channel
+    messageInput.value = channelState[activeChannel].message;
+    selectedFiles = [...channelState[activeChannel].files];
 
     if (channel === 'whatsapp') {
         mainContent.classList.remove('hidden');
