@@ -796,7 +796,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                 if (r.errors.length) log('ERROR', `Telegram errors for ${t.label}`, { errors: r.errors });
             }
             cleanupFiles(files);
-            return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent to ${resolved.length} recipient(s)!` });
+            return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent to ${resolved.length} recipient(s) via Telegram!` });
 
         // ─── EMAIL ───
         } else if (channel === 'email') {
