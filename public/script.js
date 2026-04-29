@@ -224,6 +224,7 @@ function setChannel(channel) {
     telegramInputDiv.classList.toggle('hidden', channel !== 'telegram');
     whatsappInputDiv.classList.toggle('hidden', channel !== 'whatsapp');
     emailInputDiv.classList.toggle('hidden', channel !== 'email');
+    messageInput.value = ''; // clear message when switching channel
 
     if (channel === 'whatsapp') {
         mainContent.classList.remove('hidden');
@@ -829,9 +830,10 @@ btnDropbox.addEventListener('click', () => {
 // ==============================
 
 async function importRsaPublicKey(pem) {
-    const pemHeader = "-----BEGIN PUBLIC KEY-----";
-    const pemFooter = "-----END PUBLIC KEY-----";
-    const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, "");
+    const pemContents = pem
+        .replace("-----BEGIN PUBLIC KEY-----", "")
+        .replace("-----END PUBLIC KEY-----", "")
+        .replace(/\s/g, "");
     const binaryDer = window.atob(pemContents);
     const binaryDerBuffer = new ArrayBuffer(binaryDer.length);
     const binaryDerView = new Uint8Array(binaryDerBuffer);
