@@ -12,6 +12,14 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+
+// Generate RSA Keypair for Client-to-Server Encryption
+const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -482,15 +490,16 @@ async function sendTelegram(chatId, text, files) {
     return results;
 }
 
-async function sendEmail(emailTo, text, files) {
+async function sendEmail(emailTo, text, files, senderName) {
     const results = { textSent: false, filesSent: 0, errors: [] };
     if (!transporter) return { textSent: false, filesSent: 0, errors: ['SMTP Server not configured'] };
 
     const attachments = files.map(f => ({ filename: f.originalname, path: path.resolve(f.path) }));
+    const displayName = senderName ? `${senderName} (via Bridge)` : 'Bridge Secure Transfer';
     
     try {
         await transporter.sendMail({
-            from: `"Bridge" <${smtpConfig.auth.user}>`,
+            from: `"${displayName}" <${smtpConfig.auth.user}>`,
             to: emailTo,
             subject: 'Secure File Transfer via Bridge',
             text: text || 'You have received files via Bridge.',
@@ -560,6 +569,11 @@ try {
 // ==============================
 // API ROUTES
 // ==============================
+
+// Provide the Server's RSA Public Key for Client-to-Server Encryption
+app.get('/api/security/key', (req, res) => {
+    res.json({ publicKey });
+});
 
 // WhatsApp session — creates/restores session by client-provided sessionId
 app.post('/api/whatsapp/verify', verifyLimiter, async (req, res) => {
@@ -729,11 +743,55 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
     try {
         const files = req.files || [];
         const rawTargets = sanitizeInput(req.body.chatId || '');
-        const textMessage = sanitizeInput(req.body.message || '');
+        let textMessage = sanitizeInput(req.body.message || '');
+        const encryptedAesKeyB64 = req.body.encryptedAesKey || '';
         const scheduledTime = req.body.scheduledTime || '';
         const cyclePeriod = req.body.cyclePeriod || 'none';
 
         const targets = rawTargets.split(',').map(t => t.trim()).filter(Boolean);
+
+        if (encryptedAesKeyB64) {
+            try {
+                const encryptedAesKeyBuf = Buffer.from(encryptedAesKeyB64, 'base64');
+                const aesKeyBuf = crypto.privateDecrypt(
+                    {
+                        key: privateKey,
+                        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+                        oaepHash: "sha256"
+                    },
+                    encryptedAesKeyBuf
+                );
+
+                if (textMessage) {
+                    const msgBuf = Buffer.from(textMessage, 'base64');
+                    const iv = msgBuf.subarray(0, 12);
+                    const cipherText = msgBuf.subarray(12);
+                    const authTag = cipherText.subarray(cipherText.length - 16);
+                    const actualCipher = cipherText.subarray(0, cipherText.length - 16);
+                    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, iv);
+                    decipher.setAuthTag(authTag);
+                    let decryptedMsg = decipher.update(actualCipher, undefined, 'utf8');
+                    decryptedMsg += decipher.final('utf8');
+                    textMessage = decryptedMsg;
+                }
+
+                for (const f of files) {
+                    const filePath = path.resolve(f.path);
+                    const fileBuf = fs.readFileSync(filePath);
+                    const iv = fileBuf.subarray(0, 12);
+                    const cipherText = fileBuf.subarray(12);
+                    const authTag = cipherText.subarray(cipherText.length - 16);
+                    const actualCipher = cipherText.subarray(0, cipherText.length - 16);
+                    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, iv);
+                    decipher.setAuthTag(authTag);
+                    const decryptedBuf = Buffer.concat([decipher.update(actualCipher), decipher.final()]);
+                    fs.writeFileSync(filePath, decryptedBuf);
+                }
+            } catch (e) {
+                cleanupFiles(files);
+                return res.status(400).json({ error: 'Client-to-Server Decryption failed: ' + e.message });
+            }
+        }
 
         if (targets.length === 0) { cleanupFiles(files); return res.status(400).json({ error: 'At least one recipient is required.' }); }
         if (targets.length > MAX_RECIPIENTS) { cleanupFiles(files); return res.status(400).json({ error: `Maximum ${MAX_RECIPIENTS} recipients.` }); }
@@ -804,8 +862,9 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
             let totalSent = 0;
             let totalErrors = [];
+            const senderName = sanitizeInput(req.body.senderName || '');
             for (const t of targets) {
-                const r = await sendEmail(t, textMessage, files);
+                const r = await sendEmail(t, textMessage, files, senderName);
                 totalSent += r.filesSent;
                 if (r.errors.length) totalErrors.push(...r.errors);
             }
