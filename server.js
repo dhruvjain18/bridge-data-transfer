@@ -11,6 +11,7 @@ const qrcode = require('qrcode');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -229,6 +230,26 @@ if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
     });
 } else {
     log('WARN', 'Telegram Bot Token not configured.');
+}
+
+// ==============================
+// NODEMAILER (Email functionality)
+// ==============================
+const smtpConfig = {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT) || 587,
+    secure: parseInt(process.env.SMTP_PORT) === 465,
+    auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+    }
+};
+let transporter = null;
+if (smtpConfig.auth.user && smtpConfig.auth.pass) {
+    transporter = nodemailer.createTransport(smtpConfig);
+    transporter.verify().then(() => log('INFO', 'Nodemailer connected')).catch(err => log('WARN', `Nodemailer failed: ${err.message}`));
+} else {
+    log('WARN', 'SMTP not configured. Email channel will fail.');
 }
 
 // ==============================
@@ -457,6 +478,28 @@ async function sendTelegram(chatId, text, files) {
             });
             results.filesSent++;
         } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
+    }
+    return results;
+}
+
+async function sendEmail(emailTo, text, files) {
+    const results = { textSent: false, filesSent: 0, errors: [] };
+    if (!transporter) return { textSent: false, filesSent: 0, errors: ['SMTP Server not configured'] };
+
+    const attachments = files.map(f => ({ filename: f.originalname, path: path.resolve(f.path) }));
+    
+    try {
+        await transporter.sendMail({
+            from: `"Bridge" <${smtpConfig.auth.user}>`,
+            to: emailTo,
+            subject: 'Secure File Transfer via Bridge',
+            text: text || 'You have received files via Bridge.',
+            attachments: attachments
+        });
+        results.textSent = !!text;
+        results.filesSent = files.length;
+    } catch (e) {
+        results.errors.push(`Email error: ${e.message}`);
     }
     return results;
 }
@@ -754,6 +797,25 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             }
             cleanupFiles(files);
             return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent to ${resolved.length} recipient(s)!` });
+
+        // ─── EMAIL ───
+        } else if (channel === 'email') {
+            if (!transporter) { cleanupFiles(files); return res.status(503).json({ error: 'Email SMTP not configured.' }); }
+
+            let totalSent = 0;
+            let totalErrors = [];
+            for (const t of targets) {
+                const r = await sendEmail(t, textMessage, files);
+                totalSent += r.filesSent;
+                if (r.errors.length) totalErrors.push(...r.errors);
+            }
+            cleanupFiles(files);
+            
+            if (totalErrors.length === targets.length && totalSent === 0 && !textMessage) {
+                return res.status(500).json({ error: 'Failed to send emails: ' + totalErrors[0] });
+            }
+            
+            return res.json({ success: true, message: `${totalSent + (textMessage ? targets.length : 0)} item(s) sent to ${targets.length} recipient(s) via Email!` });
 
         // ─── WHATSAPP ───
         } else if (channel === 'whatsapp') {
