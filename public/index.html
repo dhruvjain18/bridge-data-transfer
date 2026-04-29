@@ -168,14 +168,6 @@
                     <textarea id="message" rows="3" placeholder="Write a note, link, or instructions..."></textarea>
                 </div>
 
-                <div class="encryption-section">
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="encrypt-toggle">
-                        <span class="slider round"></span>
-                    </label>
-                    <span class="encrypt-label">🔒 Encrypt Transfer (E2EE)</span>
-                </div>
-
                 <div class="schedule-section">
                     <button class="schedule-toggle" id="schedule-toggle">📅 Schedule for later</button>
                     <div class="schedule-picker hidden" id="schedule-picker">
@@ -231,16 +223,6 @@
         <button class="preview-modal-close" id="preview-modal-close">✕</button>
         <div class="preview-modal-content">
             <img id="preview-image" src="" alt="File Preview" class="hidden">
-        </div>
-    </div>
-
-    <!-- Decryption Modal -->
-    <div class="decrypt-modal hidden" id="decrypt-modal">
-        <div class="decrypt-modal-content">
-            <h3>🔒 Secure File Transfer</h3>
-            <p>This file was sent with End-to-End Encryption.</p>
-            <button id="btn-decrypt" class="send-btn">Decrypt & Download</button>
-            <div id="decrypt-status" class="status hidden"></div>
         </div>
     </div>
 
