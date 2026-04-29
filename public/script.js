@@ -37,12 +37,8 @@ const telegramInputDiv = document.getElementById('telegram-input');
 const whatsappInputDiv = document.getElementById('whatsapp-input');
 const emailInputDiv = document.getElementById('email-input');
 const emailToInput = document.getElementById('emailTo');
-const encryptToggle = document.getElementById('encrypt-toggle');
 const btnGdrive = document.getElementById('btn-gdrive');
 const btnDropbox = document.getElementById('btn-dropbox');
-const decryptModal = document.getElementById('decrypt-modal');
-const btnDecrypt = document.getElementById('btn-decrypt');
-const decryptStatus = document.getElementById('decrypt-status');
 const waQrOverlay = document.getElementById('wa-qr-overlay');
 const waQrImage = document.getElementById('wa-qr-image');
 const waQrLoading = document.getElementById('wa-qr-loading');
@@ -541,22 +537,6 @@ async function handleSend() {
     sendBtnText.textContent = isScheduled ? 'Scheduling...' : 'Sending...';
     let filesToSend = await prepareFiles();
     let message = messageInput.value.trim();
-    let encryptionKey = null;
-
-    if (encryptToggle.checked) {
-        showStatus('Encrypting payload (E2EE)...', 'info');
-        try {
-            const { key, keyHex, encryptedFiles, encryptedMessage } = await encryptPayload(filesToSend, message);
-            filesToSend = encryptedFiles;
-            message = encryptedMessage;
-            encryptionKey = keyHex;
-        } catch (e) {
-            showStatus('Encryption failed: ' + e.message, 'error');
-            sendBtn.disabled = false;
-            updateSendButton();
-            return;
-        }
-    }
 
     const formData = new FormData();
     formData.append('channel', activeChannel);
@@ -590,18 +570,12 @@ async function handleSend() {
             const result = JSON.parse(xhr.responseText);
             if (xhr.status >= 200 && xhr.status < 300) {
                 playWhoosh();
-                if (encryptionKey) {
-                    const decryptUrl = `${window.location.origin}/?decrypt=1#key=${encryptionKey}`;
-                    showStatus(`Encrypted! Share this link to decrypt: ${decryptUrl}`, 'success');
-                    prompt('Copy this Decryption Link and send it to the recipient securely:', decryptUrl);
-                } else {
-                    showStatus(`${result.message} 🚀`, 'success');
-                }
+                showStatus(`${result.message} 🚀`, 'success');
                 const displayTarget = activeChannel === 'whatsapp' ? `${selectedCountry.code} ${waPhoneInput.value}` : target;
                 addHistoryEntry({ 
                     to: displayTarget, 
                     files: filesToSend.map(f => f.name), 
-                    message: encryptToggle.checked ? '[Encrypted Message]' : message, 
+                    message: message, 
                     time: new Date().toLocaleString(), 
                     scheduled: !!result.scheduled, 
                     channel: activeChannel,
@@ -817,107 +791,5 @@ btnDropbox.addEventListener('click', () => {
         linkType: 'direct',
         multiselect: true
     });
-});
-
-// ==============================
-// END-TO-END ENCRYPTION (Web Crypto API)
-// ==============================
-async function generateKey() {
-    return window.crypto.subtle.generateKey(
-        { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
-    );
-}
-
-async function exportKeyHex(key) {
-    const raw = await window.crypto.subtle.exportKey('raw', key);
-    return Array.from(new Uint8Array(raw)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function importKeyHex(hex) {
-    const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    return window.crypto.subtle.importKey(
-        'raw', bytes, { name: 'AES-GCM' }, false, ['decrypt']
-    );
-}
-
-async function encryptPayload(files, textMsg) {
-    const key = await generateKey();
-    const keyHex = await exportKeyHex(key);
-    
-    const encryptedFiles = [];
-    for (const file of files) {
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const buf = await file.arrayBuffer();
-        const cipher = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buf);
-        
-        // Bundle IV + Ciphertext
-        const combined = new Uint8Array(iv.length + cipher.byteLength);
-        combined.set(iv, 0);
-        combined.set(new Uint8Array(cipher), iv.length);
-        
-        const encFile = new File([combined], file.name + '.enc', { type: 'application/octet-stream' });
-        encryptedFiles.push(encFile);
-    }
-    
-    let encryptedMessage = textMsg;
-    if (textMsg) {
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const enc = new TextEncoder();
-        const cipher = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(textMsg));
-        const combined = new Uint8Array(iv.length + cipher.byteLength);
-        combined.set(iv, 0);
-        combined.set(new Uint8Array(cipher), iv.length);
-        encryptedMessage = '!ENC:' + btoa(String.fromCharCode.apply(null, combined));
-    }
-    
-    return { key, keyHex, encryptedFiles, encryptedMessage };
-}
-
-// Decryption Mode Check
-window.addEventListener('DOMContentLoaded', () => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('decrypt') === '1') {
-        const hash = window.location.hash.substring(1);
-        const keyMatch = hash.match(/key=([a-f0-9]+)/);
-        if (keyMatch) {
-            decryptModal.classList.remove('hidden');
-            const keyHex = keyMatch[1];
-            btnDecrypt.addEventListener('click', async () => {
-                decryptStatus.classList.remove('hidden');
-                decryptStatus.textContent = 'Please select the downloaded .enc file to decrypt.';
-                
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = '.enc';
-                input.onchange = async (e) => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    try {
-                        decryptStatus.className = 'status info';
-                        decryptStatus.textContent = 'Decrypting...';
-                        const key = await importKeyHex(keyHex);
-                        const buf = await file.arrayBuffer();
-                        const iv = new Uint8Array(buf.slice(0, 12));
-                        const cipher = new Uint8Array(buf.slice(12));
-                        const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
-                        
-                        const blob = new Blob([plain]);
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = file.name.replace(/\.enc$/, '');
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        decryptStatus.className = 'status success';
-                        decryptStatus.textContent = 'Decrypted successfully!';
-                    } catch (err) {
-                        decryptStatus.className = 'status error';
-                        decryptStatus.textContent = 'Decryption failed: ' + err.message;
-                    }
-                };
-                input.click();
-            });
-        }
-    }
 });
 
