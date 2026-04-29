@@ -534,14 +534,45 @@ async function handleSend() {
     }
 
     sendBtn.disabled = true;
-    sendBtnText.textContent = isScheduled ? 'Scheduling...' : 'Sending...';
+    sendBtnText.textContent = 'Securing payload...';
     let filesToSend = await prepareFiles();
     let message = messageInput.value.trim();
 
     const formData = new FormData();
+    try {
+        const keyRes = await fetch('/api/security/key');
+        const { publicKey } = await keyRes.json();
+        const rsaPubKey = await importRsaPublicKey(publicKey);
+        const aesKey = await generateAesKey();
+        
+        const encryptedAesKey = await encryptAesKeyWithRsa(rsaPubKey, aesKey);
+        formData.append('encryptedAesKey', encryptedAesKey);
+
+        if (message) {
+            const encoder = new TextEncoder();
+            const encryptedMsg = await encryptWithAes(aesKey, encoder.encode(message));
+            formData.append('message', window.btoa(String.fromCharCode.apply(null, encryptedMsg)));
+        }
+
+        for (const f of filesToSend) {
+            const buf = await f.arrayBuffer();
+            const encryptedBuf = await encryptWithAes(aesKey, buf);
+            const encFile = new File([encryptedBuf], f.name, { type: 'application/octet-stream' });
+            formData.append('files', encFile);
+        }
+    } catch (e) {
+        showStatus('Encryption failed: ' + e.message, 'error');
+        sendBtn.disabled = false;
+        updateSendButton();
+        return;
+    }
+
     formData.append('channel', activeChannel);
     formData.append('chatId', target);
-    formData.append('message', message);
+    if (activeChannel === 'email') {
+        const senderName = document.getElementById('senderName').value.trim();
+        if (senderName) formData.append('senderName', senderName);
+    }
     if (isScheduled && scheduleTime.value) {
         formData.append('scheduledTime', new Date(scheduleTime.value).toISOString());
         const scheduleCycle = document.getElementById('schedule-cycle');
@@ -549,7 +580,7 @@ async function handleSend() {
             formData.append('cyclePeriod', scheduleCycle.value);
         }
     }
-    filesToSend.forEach(f => formData.append('files', f));
+
 
     // Send session ID for server-side session lookup
     if (activeChannel === 'whatsapp' && verifiedPhone) {
@@ -791,5 +822,51 @@ btnDropbox.addEventListener('click', () => {
         linkType: 'direct',
         multiselect: true
     });
+    });
 });
 
+// ==============================
+// HYBRID ENCRYPTION (RSA + AES)
+// ==============================
+
+async function importRsaPublicKey(pem) {
+    const pemHeader = "-----BEGIN PUBLIC KEY-----";
+    const pemFooter = "-----END PUBLIC KEY-----";
+    const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, "");
+    const binaryDer = window.atob(pemContents);
+    const binaryDerBuffer = new ArrayBuffer(binaryDer.length);
+    const binaryDerView = new Uint8Array(binaryDerBuffer);
+    for (let i = 0; i < binaryDer.length; i++) {
+        binaryDerView[i] = binaryDer.charCodeAt(i);
+    }
+    return window.crypto.subtle.importKey(
+        "spki",
+        binaryDerBuffer,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        true,
+        ["encrypt"]
+    );
+}
+
+async function generateAesKey() {
+    return window.crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+}
+
+async function encryptWithAes(key, dataBuffer) {
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const cipher = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, dataBuffer);
+    const combined = new Uint8Array(iv.length + cipher.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(cipher), iv.length);
+    return combined;
+}
+
+async function encryptAesKeyWithRsa(rsaPubKey, aesKey) {
+    const rawKey = await window.crypto.subtle.exportKey("raw", aesKey);
+    const encryptedKey = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, rsaPubKey, rawKey);
+    return window.btoa(String.fromCharCode.apply(null, new Uint8Array(encryptedKey)));
+}
