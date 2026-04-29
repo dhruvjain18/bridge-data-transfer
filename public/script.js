@@ -822,7 +822,6 @@ btnDropbox.addEventListener('click', () => {
         linkType: 'direct',
         multiselect: true
     });
-    });
 });
 
 // ==============================
