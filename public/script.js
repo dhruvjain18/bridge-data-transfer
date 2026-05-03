@@ -67,7 +67,7 @@ const channelState = {
 // WHATSAPP SESSION INIT (QR scan = authentication)
 // ==============================
 async function initWhatsAppSession() {
-    if (waAccessVerified) return;
+    if (waAccessVerified) { startWaPolling(); return; }
 
     // Use a stored session ID or generate one
     let sessionPhone = localStorage.getItem('bridge_wa_session_phone');
@@ -242,13 +242,13 @@ function setChannel(channel) {
     if (channel === 'whatsapp') {
         mainContent.classList.remove('hidden');
         initWhatsAppSession();
+        startWaPolling(); // Always restart polling to fetch latest QR/status
         MAX_FILE_SIZE = 100 * 1024 * 1024;
         dropZoneText.textContent = 'or click to browse · max 100 MB · up to 10 files';
     } else {
         mainContent.classList.remove('hidden');
         stopWaPolling();
-        waQrOverlay.classList.add('hidden');
-        waWasConnected = false;
+        waQrOverlay.classList.add('hidden'); // Hide overlay visually on other tabs
         MAX_FILE_SIZE = 50 * 1024 * 1024;
         dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
     }
@@ -569,9 +569,9 @@ async function handleSend() {
         }
 
         for (const f of filesToSend) {
-            const buf = await f.arrayBuffer();
-            const encryptedBuf = await encryptWithAes(aesKey, buf);
-            const encFile = new File([encryptedBuf], f.name, { type: 'application/octet-stream' });
+            sendBtnText.textContent = `Encrypting ${f.name}...`;
+            const encryptedBlob = await encryptFileChunked(aesKey, f);
+            const encFile = new File([encryptedBlob], f.name, { type: 'application/octet-stream' });
             formData.append('files', encFile);
         }
     } catch (e) {
@@ -812,30 +812,98 @@ async function loadLogs() {
 adminRefreshLogs.addEventListener('click', loadLogs);
 
 // ==============================
-// CLOUD PICKERS (Stubs)
+// GOOGLE DRIVE PICKER
 // ==============================
-btnGdrive.addEventListener('click', () => {
-    // Requires window.gapi and client-id
-    alert('Google Drive Picker: Please configure your API key in the server/environment to use this feature.');
-});
+let gDriveApiKey = null;
+let gDriveClientId = null;
+let gDrivePickerInited = false;
+let gDriveOAuthToken = null;
 
-btnDropbox.addEventListener('click', () => {
-    if (typeof Dropbox === 'undefined') return alert('Dropbox SDK not loaded.');
-    Dropbox.choose({
-        success: function(files) {
-            files.forEach(f => {
-                fetch(f.link).then(r => r.blob()).then(blob => {
-                    const file = new File([blob], f.name, { type: blob.type });
-                    selectedFiles.push(file);
+async function loadDriveConfig() {
+    if (gDriveApiKey) return true;
+    try {
+        const res = await fetch('/api/gdrive/config');
+        const data = await res.json();
+        if (data.apiKey && data.clientId) {
+            gDriveApiKey = data.apiKey;
+            gDriveClientId = data.clientId;
+            return true;
+        }
+    } catch (e) { console.error('Drive config error', e); }
+    return false;
+}
+
+async function initGDrivePicker() {
+    if (gDrivePickerInited) return true;
+    return new Promise((resolve) => {
+        gapi.load('picker', () => {
+            gDrivePickerInited = true;
+            resolve(true);
+        });
+    });
+}
+
+async function getGDriveOAuthToken() {
+    if (gDriveOAuthToken) return gDriveOAuthToken;
+    return new Promise((resolve, reject) => {
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: gDriveClientId,
+            scope: 'https://www.googleapis.com/auth/drive.readonly',
+            callback: (response) => {
+                if (response.error) { reject(response.error); return; }
+                gDriveOAuthToken = response.access_token;
+                resolve(gDriveOAuthToken);
+            }
+        });
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+    });
+}
+
+btnGdrive.addEventListener('click', async () => {
+    const hasConfig = await loadDriveConfig();
+    if (!hasConfig) {
+        alert('Google Drive Picker: Please configure your API key in the server/environment to use this feature.');
+        return;
+    }
+
+    try {
+        showStatus('Loading Google Drive...', 'info');
+        await initGDrivePicker();
+        const token = await getGDriveOAuthToken();
+
+        const picker = new google.picker.PickerBuilder()
+            .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+            .addView(google.picker.ViewId.DOCS)
+            .addView(google.picker.ViewId.RECENTLY_PICKED)
+            .setOAuthToken(token)
+            .setDeveloperKey(gDriveApiKey)
+            .setCallback(async (data) => {
+                if (data.action === google.picker.Action.PICKED) {
+                    for (const doc of data.docs) {
+                        try {
+                            showStatus(`Downloading ${doc.name}...`, 'info');
+                            const res = await fetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            if (!res.ok) throw new Error(`Failed to download: ${res.status}`);
+                            const blob = await res.blob();
+                            const file = new File([blob], doc.name, { type: doc.mimeType || blob.type });
+                            selectedFiles.push(file);
+                        } catch (e) {
+                            showStatus(`Failed to download ${doc.name}: ${e.message}`, 'error');
+                        }
+                    }
                     renderFileList();
                     updateSendButton();
-                });
-            });
-        },
-        cancel: function() {},
-        linkType: 'direct',
-        multiselect: true
-    });
+                    showStatus(`${data.docs.length} file(s) added from Google Drive`, 'success');
+                }
+            })
+            .setTitle('Select files from Google Drive')
+            .build();
+        picker.setVisible(true);
+    } catch (e) {
+        showStatus('Google Drive error: ' + e, 'error');
+    }
 });
 
 // ==============================
@@ -870,6 +938,7 @@ async function generateAesKey() {
     );
 }
 
+// Encrypt a small buffer (messages) — single-shot
 async function encryptWithAes(key, dataBuffer) {
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const cipher = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, dataBuffer);
@@ -879,8 +948,70 @@ async function encryptWithAes(key, dataBuffer) {
     return combined;
 }
 
+// Chunked file encryption — processes file in 64KB blocks to avoid RAM crashes
+// Format: [4-byte chunk length][12-byte IV][encrypted data + 16-byte GCM tag] per chunk
+const CHUNK_SIZE = 64 * 1024; // 64KB
+
+async function encryptFileChunked(aesKey, file) {
+    const chunks = [];
+    let offset = 0;
+    const fileSize = file.size;
+
+    while (offset < fileSize) {
+        const end = Math.min(offset + CHUNK_SIZE, fileSize);
+        const slice = file.slice(offset, end);
+        const plainBuf = await slice.arrayBuffer();
+
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const cipher = await window.crypto.subtle.encrypt(
+            { name: "AES-GCM", iv },
+            aesKey,
+            plainBuf
+        );
+
+        // Each chunk: [4-byte length header][12-byte IV][ciphertext + GCM tag]
+        const chunkPayload = new Uint8Array(iv.length + cipher.byteLength);
+        chunkPayload.set(iv, 0);
+        chunkPayload.set(new Uint8Array(cipher), iv.length);
+
+        // 4-byte big-endian length prefix
+        const lenHeader = new Uint8Array(4);
+        const dv = new DataView(lenHeader.buffer);
+        dv.setUint32(0, chunkPayload.length, false);
+
+        chunks.push(lenHeader);
+        chunks.push(chunkPayload);
+
+        offset = end;
+    }
+
+    return new Blob(chunks);
+}
+
 async function encryptAesKeyWithRsa(rsaPubKey, aesKey) {
     const rawKey = await window.crypto.subtle.exportKey("raw", aesKey);
     const encryptedKey = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, rsaPubKey, rawKey);
     return window.btoa(String.fromCharCode.apply(null, new Uint8Array(encryptedKey)));
 }
+
+// ==============================
+// DROPBOX PICKER
+// ==============================
+btnDropbox.addEventListener('click', () => {
+    if (typeof Dropbox === 'undefined') return alert('Dropbox SDK not loaded.');
+    Dropbox.choose({
+        success: function(files) {
+            files.forEach(f => {
+                fetch(f.link).then(r => r.blob()).then(blob => {
+                    const file = new File([blob], f.name, { type: blob.type });
+                    selectedFiles.push(file);
+                    renderFileList();
+                    updateSendButton();
+                });
+            });
+        },
+        cancel: function() {},
+        linkType: 'direct',
+        multiselect: true
+    });
+});
