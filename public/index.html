@@ -13,10 +13,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <button class="admin-toggle" id="admin-toggle" title="Admin Panel">⚙️</button>
+    <button class="admin-toggle" id="admin-toggle" title="Admin Panel" data-i18n-title="admin_title">⚙️</button>
+    <div class="lang-selector">
+        <button class="lang-btn" id="lang-toggle" title="Switch Language">🌐</button>
+        <div class="lang-dropdown hidden" id="lang-dropdown">
+            <button data-lang="en">English</button>
+            <button data-lang="hi">हिन्दी</button>
+        </div>
+    </div>
     <button class="theme-toggle" id="theme-toggle" title="Toggle theme"><span class="theme-icon" id="theme-icon">🌙</span></button>
-    <button class="help-fab" id="help-fab" title="Help & FAQ"><span class="help-fab-icon" id="help-fab-icon">?</span></button>
-    <button class="history-fab" id="history-fab" title="Transfer History">🕘</button>
+    <button class="help-fab" id="help-fab" title="Help & FAQ" data-i18n-title="help_title"><span class="help-fab-icon" id="help-fab-icon">?</span></button>
+    <button class="history-fab" id="history-fab" title="Transfer History" data-i18n-title="history_title">🕘</button>
 
     <!-- Top Toast Notification -->
     <div class="top-toast hidden" id="top-toast"></div>
@@ -24,38 +31,71 @@
     <!-- Admin Panel -->
     <div class="admin-panel hidden" id="admin-panel">
         <div class="admin-header">
-            <h3>⚙️ Admin Panel</h3>
+            <h3 data-i18n="admin_title">⚙️ Admin Panel</h3>
             <button class="admin-close" id="admin-close">✕</button>
         </div>
 
         <!-- Admin Login -->
         <div class="admin-login" id="admin-login">
             <div class="admin-login-icon">🔐</div>
-            <p>Enter admin password to continue</p>
+            <p data-i18n="admin_login_prompt">Enter admin password to continue</p>
             <div class="admin-login-input">
                 <input type="password" id="admin-password" placeholder="Password" autocomplete="off">
-                <button id="admin-login-btn">Login</button>
+                <button id="admin-login-btn" data-i18n="admin_login_btn">Login</button>
             </div>
-            <p class="admin-login-error hidden" id="admin-login-error">Invalid password.</p>
+            <p class="admin-login-error hidden" id="admin-login-error" data-i18n="admin_login_error">Invalid password.</p>
+            
+            <!-- 2FA Section (Hidden initially) -->
+            <div id="admin-2fa-section" class="hidden" style="margin-top: 20px;">
+                <p data-i18n="admin_2fa_label">2FA Code</p>
+                <div class="admin-login-input">
+                    <input type="text" id="admin-2fa-token" placeholder="000000" maxlength="6" data-i18n-placeholder="admin_2fa_placeholder">
+                    <button id="admin-2fa-verify-btn" data-i18n="admin_login_btn">Login</button>
+                </div>
+            </div>
         </div>
 
         <!-- Admin Content (hidden until logged in) -->
         <div class="admin-content hidden" id="admin-content">
             <!-- Dashboard -->
             <div class="admin-section">
-                <h4>📊 Dashboard</h4>
+                <h4 data-i18n="admin_dashboard">📊 Dashboard</h4>
                 <div class="admin-stats" id="admin-stats"></div>
+            </div>
+
+            <!-- Analytics -->
+            <div class="admin-section">
+                <h4 data-i18n="admin_analytics">📈 Analytics</h4>
+                <div class="analytics-container">
+                    <canvas id="transfers-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- 2FA Setup -->
+            <div class="admin-section" id="admin-2fa-setup-section">
+                <h4 data-i18n="admin_2fa_setup">🔐 Setup 2FA</h4>
+                <div id="admin-2fa-qr-container" class="hidden">
+                    <p data-i18n="admin_2fa_scan">Scan with Google Authenticator</p>
+                    <div id="admin-2fa-qr"></div>
+                </div>
+                <div id="admin-2fa-status"></div>
             </div>
 
             <!-- Telegram Users -->
             <div class="admin-section">
-                <h4>👥 Telegram Users</h4>
+                <h4 data-i18n="admin_tg_users">👥 Telegram Users</h4>
                 <div class="admin-list" id="admin-tg-users"></div>
             </div>
 
             <!-- Logs -->
             <div class="admin-section">
-                <h4>📋 Recent Logs <button class="admin-refresh-btn" id="admin-refresh-logs">↻</button></h4>
+                <h4 style="display: flex; align-items: center; justify-content: space-between;">
+                    <span data-i18n="admin_logs">📋 Recent Logs</span>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="admin-refresh-btn" id="admin-download-logs" data-i18n="admin_download_logs">📥 Download</button>
+                        <button class="admin-refresh-btn" id="admin-refresh-logs">↻</button>
+                    </div>
+                </h4>
                 <div class="admin-logs" id="admin-logs"></div>
             </div>
         </div>
@@ -63,9 +103,9 @@
 
     <!-- Help Chat -->
     <div class="help-chat hidden" id="help-chat">
-        <div class="help-chat-header"><h3>💬 Help & FAQ</h3><button class="help-chat-close" id="help-chat-close">✕</button></div>
-        <div class="help-chat-body">
-            <p class="faq-section-title">Getting Started</p>
+        <div class="help-chat-header"><h3 data-i18n="help_title">💬 Help & FAQ</h3><button class="help-chat-close" id="help-chat-close">✕</button></div>
+        <div class="help-chat-body" id="faq-body">
+            <p class="faq-section-title" data-i18n="faq_getting_started">Getting Started</p>
             <details class="faq-item" open><summary>What is Bridge?</summary><p>Bridge is a secure file transfer platform that lets you send files and messages directly to anyone via <b>Telegram</b> or <b>WhatsApp</b> — no email, no sign-up, no hassle.</p></details>
             <details class="faq-item"><summary>How do I find my Telegram username?</summary><p>Open <b>Telegram</b> → <b>Settings</b> → your username starts with <b>@</b>. Example: <code>@dhruv_19</code></p></details>
             <details class="faq-item"><summary>How do I register for the Telegram bot?</summary><p>Search <a href="https://t.me/File_Bridge_19_bot" target="_blank">@File_Bridge_19_bot</a> on Telegram and tap <b>Start</b>. You are now registered forever!</p></details>
@@ -79,7 +119,6 @@
             <p class="faq-section-title">Features</p>
             <details class="faq-item"><summary>Can I send to multiple people at once?</summary><p>Yes! Separate usernames or phone numbers with commas. Example: <code>@user1, @user2</code></p></details>
             <details class="faq-item"><summary>What is "Schedule for later"?</summary><p>Click <b>📅 Schedule for later</b>, pick a future date and time, and your files will be sent automatically at that time.</p></details>
-            <details class="faq-item"><summary>What happens if my file exceeds 50 MB?</summary><p>Bridge uses <b>Auto-Zip</b> — it compresses oversized files into a ZIP before sending. You'll see a yellow badge.</p></details>
             <details class="faq-item"><summary>What file types are supported?</summary><p>All file types — PDFs, docs, images, spreadsheets, ZIPs, code files, videos. Limit: <b>50 MB per file</b>.</p></details>
             <details class="faq-item"><summary>Can I send just a text message?</summary><p>Yes! Leave the file zone empty and type your message. It will be sent as a regular text message.</p></details>
             <details class="faq-item"><summary>What is the Transfer History?</summary><p>Click 🕘 on the bottom-right to view all past transfers. History is stored locally in your browser.</p></details>
@@ -94,18 +133,18 @@
 
     <!-- History Panel -->
     <div class="history-panel hidden" id="history-panel">
-        <div class="history-header"><h3>🕘 Transfer History</h3><div class="history-actions"><button class="history-clear" id="history-clear">Clear</button><button class="history-close" id="history-close">✕</button></div></div>
+        <div class="history-header"><h3 data-i18n="history_title">🕘 Transfer History</h3><div class="history-actions"><button class="history-clear" id="history-clear" data-i18n="history_clear">Clear</button><button class="history-close" id="history-close">✕</button></div></div>
         <div class="history-tabs">
-            <button class="history-tab active" data-tab="messages">Messages</button>
-            <button class="history-tab" data-tab="scheduled">Scheduled Jobs</button>
+            <button class="history-tab active" data-tab="messages" data-i18n="history_tab_messages">Messages</button>
+            <button class="history-tab" data-tab="scheduled" data-i18n="history_tab_scheduled">Scheduled Jobs</button>
         </div>
         <div class="history-channel-filter" id="history-channel-filter">
-            <button class="history-filter-btn active" data-filter="all">All</button>
-            <button class="history-filter-btn" data-filter="telegram">📱 Telegram</button>
-            <button class="history-filter-btn" data-filter="whatsapp">💬 WhatsApp</button>
-            <button class="history-filter-btn" data-filter="email">📧 Email</button>
+            <button class="history-filter-btn active" data-filter="all" data-i18n="history_filter_all">All</button>
+            <button class="history-filter-btn" data-filter="telegram" data-i18n="history_filter_telegram">📱 Telegram</button>
+            <button class="history-filter-btn" data-filter="whatsapp" data-i18n="history_filter_whatsapp">💬 WhatsApp</button>
+            <button class="history-filter-btn" data-filter="email" data-i18n="history_filter_email">📧 Email</button>
         </div>
-        <div class="history-body" id="history-body"><p class="history-empty">No transfers yet.</p></div>
+        <div class="history-body" id="history-body"><p class="history-empty" data-i18n="history_empty">No transfers yet.</p></div>
     </div>
 
     <!-- Main App -->
@@ -113,38 +152,43 @@
         <div class="container">
             <div class="onboarding" id="onboarding">
                 <div class="onboarding-icon">📲</div>
-                <div class="onboarding-text"><strong>First time?</strong> Open <a href="https://t.me/File_Bridge_19_bot" target="_blank">@File_Bridge_19_bot</a> and press <b>/start</b> to register for Telegram.</div>
+                <div class="onboarding-text" data-i18n="onboarding_text"><strong>First time?</strong> Open <a href="https://t.me/File_Bridge_19_bot" target="_blank">@File_Bridge_19_bot</a> and press <b>/start</b> to register for Telegram.</div>
                 <button class="dismiss-btn" id="dismiss-btn">✕</button>
+            </div>
+
+            <!-- Offline Queue Indicator -->
+            <div id="offline-indicator" class="status info hidden" style="margin-bottom: 20px;">
+                <span data-i18n="offline_queued">📴 {count} transfer(s) queued — will send when online</span>
             </div>
 
             <header>
                 <h1>Bridge<span class="dot">.</span></h1>
-                <p>Securely push files & messages</p>
+                <p data-i18n="app_subtitle">Securely push files & messages</p>
             </header>
 
             <!-- Channel Selector -->
             <div class="channel-selector">
-                <button class="channel-btn active" id="btn-telegram" data-channel="telegram">📱 Telegram</button>
-                <button class="channel-btn" id="btn-whatsapp" data-channel="whatsapp">💬 WhatsApp</button>
-                <button class="channel-btn" id="btn-email" data-channel="email">📧 Email</button>
+                <button class="channel-btn active" id="btn-telegram" data-channel="telegram" data-i18n="channel_telegram">📱 Telegram</button>
+                <button class="channel-btn" id="btn-whatsapp" data-channel="whatsapp" data-i18n="channel_whatsapp">💬 WhatsApp</button>
+                <button class="channel-btn" id="btn-email" data-channel="email" data-i18n="channel_email">📧 Email</button>
             </div>
 
             <!-- WhatsApp QR Overlay -->
             <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
-                <p>Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
+                <p data-i18n="wa_qr_prompt">Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
                 <div class="qr-box" id="wa-qr-box">
                     <img id="wa-qr-image" src="" alt="QR" class="hidden">
-                    <div id="wa-qr-loading">Creating your session...</div>
+                    <div id="wa-qr-loading" data-i18n="wa_qr_loading">Creating your session...</div>
                 </div>
-                <p class="wa-qr-hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
+                <p class="wa-qr-hint" data-i18n="wa_qr_hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
                 <div class="wa-pairing-toggle">
-                    <button id="wa-pairing-link" class="wa-pairing-btn">📱 Can't scan? Use pairing code</button>
+                    <button id="wa-pairing-link" class="wa-pairing-btn" data-i18n="wa_pairing_btn">📱 Can't scan? Use pairing code</button>
                 </div>
                 <div class="wa-pairing-section hidden" id="wa-pairing-section">
-                    <p class="wa-pairing-info">Enter your phone number with country code to get a pairing code</p>
+                    <p class="wa-pairing-info" data-i18n="wa_pairing_info">Enter your phone number with country code to get a pairing code</p>
                     <div class="wa-pairing-input-row">
                         <input type="text" id="wa-pairing-phone" placeholder="e.g. 919876543210" autocomplete="off">
-                        <button id="wa-pairing-submit">Get Code</button>
+                        <button id="wa-pairing-submit" data-i18n="wa_pairing_get_code">Get Code</button>
                     </div>
                     <div class="wa-pairing-code hidden" id="wa-pairing-code">
                         <p class="wa-pairing-label">Your pairing code:</p>
@@ -158,13 +202,13 @@
             <main id="main-content">
                 <!-- Telegram input -->
                 <div class="input-group" id="telegram-input">
-                    <label for="chatId">Telegram Username</label>
-                    <input type="text" id="chatId" placeholder="@username or @user1, @user2" autocomplete="off">
+                    <label for="chatId" data-i18n="label_telegram_username">Telegram Username</label>
+                    <input type="text" id="chatId" placeholder="@username or @user1, @user2" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
                 </div>
 
                 <!-- WhatsApp input -->
                 <div class="input-group hidden" id="whatsapp-input">
-                    <label for="waPhone">Recipient Phone Number(s) <span class="optional">(comma separated)</span></label>
+                    <label for="waPhone"><span data-i18n="label_recipient_phone">Recipient Phone Number(s)</span> <span class="optional" data-i18n="label_comma_separated">(comma separated)</span></label>
                     <div class="phone-input-wrapper">
                         <div class="country-selector" id="country-selector">
                             <button class="country-btn" id="country-btn" type="button">
@@ -174,35 +218,37 @@
                             </button>
                             <div class="country-dropdown hidden" id="country-dropdown"></div>
                         </div>
-                        <input type="text" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off">
+                        <input type="text" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off" data-i18n-placeholder="placeholder_phone">
                     </div>
                     <p class="phone-hint" id="phone-hint"></p>
                 </div>
 
                 <!-- Email input -->
                 <div class="input-group hidden" id="email-input">
-                    <label for="senderName">Your Name <span class="optional">(optional)</span></label>
-                    <input type="text" id="senderName" placeholder="e.g. Rahul" autocomplete="off" style="margin-bottom: 12px;">
-                    <label for="emailTo">Recipient Email(s) <span class="optional">(comma separated)</span></label>
-                    <input type="text" id="emailTo" placeholder="person@example.com, friend@example.com" autocomplete="off">
+                    <label for="senderName"><span data-i18n="label_your_name">Your Name</span> <span class="optional" data-i18n="label_optional">(optional)</span></label>
+                    <input type="text" id="senderName" placeholder="e.g. Rahul" autocomplete="off" style="margin-bottom: 12px;" data-i18n-placeholder="placeholder_name">
+                    <label for="emailTo"><span data-i18n="label_recipient_email">Recipient Email(s)</span> <span class="optional" data-i18n="label_comma_separated">(comma separated)</span></label>
+                    <input type="text" id="emailTo" placeholder="person@example.com, friend@example.com" autocomplete="off" data-i18n-placeholder="placeholder_email">
                 </div>
 
                 <div class="input-group">
-                    <label for="message">Message <span class="optional">(optional)</span></label>
-                    <textarea id="message" rows="3" placeholder="Write a note, link, or instructions..."></textarea>
+                    <label for="message"><span data-i18n="label_message">Message</span> <span class="optional" data-i18n="label_optional">(optional)</span></label>
+                    <textarea id="message" rows="3" placeholder="Write a note, link, or instructions..." data-i18n-placeholder="placeholder_message"></textarea>
                 </div>
 
+
+
                 <div class="schedule-section">
-                    <button class="schedule-toggle" id="schedule-toggle">📅 Schedule for later</button>
+                    <button class="schedule-toggle" id="schedule-toggle" data-i18n="btn_schedule">📅 Schedule for later</button>
                     <div class="schedule-picker hidden" id="schedule-picker">
                         <input type="datetime-local" id="schedule-time" class="schedule-input">
                         <select id="schedule-cycle" class="schedule-cycle">
-                            <option value="none">Does not repeat</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="monthly">Monthly</option>
+                            <option value="none" data-i18n="schedule_no_repeat">Does not repeat</option>
+                            <option value="daily" data-i18n="schedule_daily">Daily</option>
+                            <option value="weekly" data-i18n="schedule_weekly">Weekly</option>
+                            <option value="monthly" data-i18n="schedule_monthly">Monthly</option>
                         </select>
-                        <button class="schedule-cancel" id="schedule-cancel">Cancel</button>
+                        <button class="schedule-cancel" id="schedule-cancel" data-i18n="btn_cancel">Cancel</button>
                     </div>
                 </div>
 
@@ -214,40 +260,50 @@
                             <line x1="12" y1="3" x2="12" y2="15"></line>
                         </svg>
                     </div>
-                    <h3>Drag & Drop files here</h3>
-                    <div class="cloud-pickers">
-                        <button id="btn-gdrive" type="button" class="cloud-btn">📁 Drive</button>
-                        <button id="btn-dropbox" type="button" class="cloud-btn">📦 Dropbox</button>
-                    </div>
-                    <p id="drop-zone-text">or click to browse · max 50 MB · up to 10 files</p>
-                    <input type="file" id="file-input" class="hidden" multiple>
+                    <h3 data-i18n="drop_title">Drag & Drop files here</h3>
+                    <p id="drop-zone-text" data-i18n="drop_subtitle">or click to browse · max 50 MB · up to 10 files</p>
+                    <input type="file" id="file-input" style="width: 1px; height: 1px; opacity: 0; position: absolute; left: -9999px;" multiple>
+                    <input type="file" id="folder-input" style="width: 1px; height: 1px; opacity: 0; position: absolute; left: -9999px;" webkitdirectory multiple>
                 </div>
 
+                <div id="file-actions" class="file-actions hidden" style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                    <button id="btn-zip-selected" class="cloud-btn" style="padding: 6px 12px; font-size: 12px; border-radius: 6px;" data-i18n="btn_zip_selected">Zip Selected Files</button>
+                </div>
                 <div id="file-list" class="file-list hidden"></div>
                 <div class="progress-container hidden" id="progress-container">
                     <div class="progress-bar" id="progress-bar"></div>
                     <span class="progress-text" id="progress-text">0%</span>
                 </div>
-                <button id="send-btn" class="send-btn hidden"><span id="send-btn-text">Send</span></button>
+                <button id="send-btn" class="send-btn hidden"><span id="send-btn-text" data-i18n="btn_send">Send</span></button>
                 <div id="status" class="status hidden"></div>
             </main>
 
             <footer class="privacy-footer">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                <span>Your data is end-to-end confidential. Files are instantly deleted after delivery.</span>
+                <span data-i18n="privacy_text">Your data is end-to-end confidential. Files are instantly deleted after delivery.</span>
             </footer>
-            <div class="copyright">© 2026 Bridge by Dhruv Jain. All rights reserved.</div>
+            <div class="copyright" data-i18n="copyright">© 2026 Bridge by Dhruv Jain. All rights reserved.</div>
         </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <!-- File Preview Modal -->
     <div class="preview-modal hidden" id="preview-modal">
         <button class="preview-modal-close" id="preview-modal-close">✕</button>
-        <div class="preview-modal-content">
-            <img id="preview-image" src="" alt="File Preview" class="hidden">
+        <div class="preview-modal-nav">
+            <button id="preview-prev">‹</button>
+            <button id="preview-next">›</button>
         </div>
+        <div class="preview-modal-content" id="preview-content">
+            <!-- Dynamic content here -->
+        </div>
+        <div class="preview-info" id="preview-info"></div>
     </div>
 
     <!-- Cloud Picker APIs -->
