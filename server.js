@@ -91,7 +91,7 @@ app.use((req, res, next) => {
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com https://accounts.google.com https://www.dropbox.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; img-src 'self' data: blob:; connect-src 'self' https://www.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com;");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com https://accounts.google.com https://www.dropbox.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; img-src 'self' data: blob:; connect-src 'self' https://www.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com; frame-src 'self' blob: https://docs.google.com https://accounts.google.com https://content.googleapis.com; object-src 'self' blob:;");
     next();
 });
 
@@ -1337,6 +1337,24 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         res.status(500).json({ error: `Failed: ${error.message}` });
     }
 });
+
+// ==============================
+// HEALTH CHECK & KEEP-ALIVE
+// ==============================
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Self-ping to prevent sleep on Render/Railway Free Tiers
+const APP_URL = process.env.APP_URL; 
+if (APP_URL) {
+    const https = require('https');
+    setInterval(() => {
+        https.get(`${APP_URL}/health`, (res) => {
+            if (res.statusCode === 200) log('DEBUG', 'Self-ping successful (Keep-Alive)');
+        }).on('error', (err) => {
+            log('WARN', 'Self-ping failed', { error: err.message });
+        });
+    }, 10 * 60 * 1000); // Ping every 10 minutes
+}
 
 // ==============================
 // STARTUP
