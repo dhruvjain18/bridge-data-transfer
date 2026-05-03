@@ -37,8 +37,6 @@ const telegramInputDiv = document.getElementById('telegram-input');
 const whatsappInputDiv = document.getElementById('whatsapp-input');
 const emailInputDiv = document.getElementById('email-input');
 const emailToInput = document.getElementById('emailTo');
-const btnGdrive = document.getElementById('btn-gdrive');
-const btnDropbox = document.getElementById('btn-dropbox');
 const waQrOverlay = document.getElementById('wa-qr-overlay');
 const waQrImage = document.getElementById('wa-qr-image');
 const waQrLoading = document.getElementById('wa-qr-loading');
@@ -49,6 +47,22 @@ const countryDropdown = document.getElementById('country-dropdown');
 const phoneHint = document.getElementById('phone-hint');
 const mainContent = document.getElementById('main-content');
 const dropZoneText = document.getElementById('drop-zone-text');
+const langToggle = document.getElementById('lang-toggle');
+const langDropdown = document.getElementById('lang-dropdown');
+const folderInput = document.getElementById('folder-input');
+const offlineIndicator = document.getElementById('offline-indicator');
+const admin2faSection = document.getElementById('admin-2fa-section');
+const admin2faToken = document.getElementById('admin-2fa-token');
+const admin2faVerifyBtn = document.getElementById('admin-2fa-verify-btn');
+const adminDownloadLogsBtn = document.getElementById('admin-download-logs');
+const admin2faSetupSection = document.getElementById('admin-2fa-setup-section');
+const admin2faQrContainer = document.getElementById('admin-2fa-qr-container');
+const admin2faQr = document.getElementById('admin-2fa-qr');
+const admin2faStatus = document.getElementById('admin-2fa-status');
+const previewContent = document.getElementById('preview-content');
+const previewInfo = document.getElementById('preview-info');
+const previewPrev = document.getElementById('preview-prev');
+const previewNext = document.getElementById('preview-next');
 
 let MAX_FILE_SIZE = 50 * 1024 * 1024;
 let selectedFiles = [];
@@ -62,6 +76,92 @@ const channelState = {
     whatsapp: { message: '', files: [] },
     email: { message: '', files: [] }
 };
+
+let currentLanguage = localStorage.getItem('bridge_lang') || 'en';
+let i18nData = {};
+let currentPreviewIndex = 0;
+let offlineQueue = JSON.parse(localStorage.getItem('bridge_offline_queue') || '[]');
+
+// ==============================
+// i18n: MULTI-LANGUAGE
+// ==============================
+async function initI18n() {
+    try {
+        const res = await fetch(`/i18n/${currentLanguage}.json`);
+        i18nData = await res.json();
+        applyI18n();
+    } catch (e) { console.error('i18n load failed', e); }
+}
+
+function t(key, params = {}) {
+    let str = i18nData[key] || key;
+    for (const [k, v] of Object.entries(params)) {
+        str = str.replace(`{${k}}`, v);
+    }
+    return str;
+}
+
+function applyI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        el.innerHTML = t(key);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        el.placeholder = t(key);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        const key = el.getAttribute('data-i18n-title');
+        el.title = t(key);
+    });
+
+    // Highlight the active language
+    document.querySelectorAll('[data-lang]').forEach(btn => {
+        if (btn.getAttribute('data-lang') === currentLanguage) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Update dynamic text
+    if (dropZoneText) dropZoneText.innerHTML = t('drop_subtitle', { size: activeChannel === 'telegram' ? 50 : 100 });
+}
+
+async function switchLanguage(lang) {
+    currentLanguage = lang;
+    localStorage.setItem('bridge_lang', lang);
+    await initI18n();
+    langDropdown.classList.add('hidden');
+}
+
+// ==============================
+// TOAST NOTIFICATION
+// ==============================
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;display:flex;flex-direction:column;gap:8px;';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.style.cssText = `
+        padding:12px 20px;border-radius:10px;color:#fff;font-size:14px;font-weight:500;
+        max-width:350px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);
+        animation:slideInRight 0.3s ease;cursor:pointer;
+        background:${type === 'error' ? 'rgba(220,38,38,0.9)' : type === 'info' ? 'rgba(59,130,246,0.9)' : 'rgba(34,197,94,0.9)'};
+    `;
+    toast.textContent = message;
+    toast.onclick = () => toast.remove();
+    container.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 4000);
+}
+
+// Alias for clipboard paste handler
+function handleFiles(files) { addFiles(files); }
 
 // ==============================
 // WHATSAPP SESSION INIT (QR scan = authentication)
@@ -96,6 +196,92 @@ async function initWhatsAppSession() {
 // ==============================
 // COUNTRY DATA
 // ==============================
+// ==============================
+// CLIPBOARD PASTE
+// ==============================
+document.addEventListener('paste', async (e) => {
+    const items = e.clipboardData.items;
+    let pastedFiles = [];
+    for (const item of items) {
+        if (item.kind === 'file') {
+            const file = item.getAsFile();
+            if (file) pastedFiles.push(file);
+        }
+    }
+    if (pastedFiles.length > 0) {
+        handleFiles(pastedFiles);
+        dropZone.classList.add('paste-flash');
+        setTimeout(() => dropZone.classList.remove('paste-flash'), 500);
+        showToast(t('toast_paste', { count: pastedFiles.length }));
+    }
+});
+
+// ==============================
+// IMAGE COMPRESSION (Client-side)
+// ==============================
+async function compressImage(file) {
+    return file; // Feature removed
+}
+
+
+// ==============================
+// FOLDER UPLOAD (JSZip)
+// ==============================
+async function handleFolder(files) {
+    if (files.length === 0) return;
+    showToast(t('toast_folder_zipping') || 'Zipping folder...', 'info');
+
+    try {
+        if (typeof JSZip === 'undefined') throw new Error("JSZip library is not loaded.");
+        const zip = new JSZip();
+        const firstPath = files[0].webkitRelativePath;
+        const folderName = (firstPath ? firstPath.split('/')[0] : 'folder') || 'folder';
+
+        for (const file of files) {
+            const path = file.webkitRelativePath || file.name;
+            zip.file(path, file);
+        }
+
+        const content = await zip.generateAsync({ type: 'blob' });
+        const zipFile = new File([content], `${folderName}.zip`, { type: 'application/zip' });
+        handleFiles([zipFile]);
+        showToast('Folder zipped successfully!', 'success');
+    } catch (e) {
+        console.error('Folder zipping failed:', e);
+        showToast(`Failed to zip: ${e.message}`, 'error');
+    } finally {
+        if (folderInput) folderInput.value = '';
+    }
+}
+
+// ==============================
+// FILE TYPE ICONS
+// ==============================
+function getFileIcon(filename, mimetype) {
+    const ext = filename.split('.').pop().toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) return '🖼️';
+    if (ext === 'pdf') return '📄';
+    if (['doc', 'docx'].includes(ext)) return '📝';
+    if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊';
+    if (['mp4', 'mov', 'avi', 'mkv'].includes(ext)) return '🎬';
+    if (['mp3', 'wav', 'ogg'].includes(ext)) return '🎵';
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '📦';
+    if (['js', 'py', 'java', 'html', 'css', 'json', 'cpp', 'c', 'php'].includes(ext)) return '💻';
+    return '📄';
+}
+
+function getIconClass(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) return '';
+    if (ext === 'pdf') return 'icon-pdf';
+    if (['doc', 'docx'].includes(ext)) return 'icon-doc';
+    if (['xls', 'xlsx', 'csv'].includes(ext)) return 'icon-xls';
+    if (['mp4', 'mov', 'avi', 'mkv'].includes(ext)) return 'icon-video';
+    if (['mp3', 'wav', 'ogg'].includes(ext)) return 'icon-audio';
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'icon-zip';
+    if (['js', 'py', 'java', 'html', 'css', 'json', 'cpp', 'c', 'php'].includes(ext)) return 'icon-code';
+    return '';
+}
 const countries = [
     { name: 'India', code: '+91', flag: '🇮🇳', digits: 10 },
     { name: 'United States', code: '+1', flag: '🇺🇸', digits: 10 },
@@ -153,7 +339,7 @@ document.addEventListener('click', () => countryDropdown.classList.add('hidden')
 function validatePhone() {
     const rawPhones = waPhoneInput.value.split(',').map(s => s.trim()).filter(Boolean);
     if (rawPhones.length === 0) { phoneHint.textContent = ''; phoneHint.className = 'phone-hint'; return false; }
-    
+
     if (rawPhones.length === 1) {
         const val = rawPhones[0].replace(/\D/g, '');
         if (val.length === selectedCountry.digits) {
@@ -195,7 +381,7 @@ function playWhoosh() {
         gain.gain.setValueAtTime(0.3, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
         osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
-    } catch (e) {}
+    } catch (e) { }
 }
 
 // ==============================
@@ -230,11 +416,11 @@ function setChannel(channel) {
     btnTelegram.classList.toggle('active', channel === 'telegram');
     btnWhatsapp.classList.toggle('active', channel === 'whatsapp');
     btnEmail.classList.toggle('active', channel === 'email');
-    
+
     telegramInputDiv.classList.toggle('hidden', channel !== 'telegram');
     whatsappInputDiv.classList.toggle('hidden', channel !== 'whatsapp');
     emailInputDiv.classList.toggle('hidden', channel !== 'email');
-    
+
     // Restore state for the new channel
     messageInput.value = channelState[activeChannel].message;
     selectedFiles = [...channelState[activeChannel].files];
@@ -296,7 +482,7 @@ async function checkWaStatus() {
             if (data.qr) { waQrImage.src = data.qr; waQrImage.classList.remove('hidden'); waQrLoading.classList.add('hidden'); }
             else { waQrImage.classList.add('hidden'); waQrLoading.classList.remove('hidden'); }
         }
-    } catch (e) {}
+    } catch (e) { }
 }
 
 // ==============================
@@ -428,20 +614,20 @@ function renderHistoryItem(item) {
     const ch = item.channel || 'telegram';
     const isFuture = item.scheduledTime && new Date(item.scheduledTime) > new Date() && !item.canceled;
     const chLabel = ch === 'telegram' ? '📱 TG' : ch === 'whatsapp' ? '💬 WA' : '📧 Email';
-    
+
     let statusHtml = `<span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? (item.canceled ? '🚫 Canceled' : '⏰ Scheduled') : '✅ Sent'}</span>`;
     if (isFuture) {
         statusHtml += `<button class="cancel-job-btn" data-id="${item.jobId}">Cancel</button>`;
     }
-    
+
     // Cycle badge for recurring scheduled jobs
     let cycleBadge = '';
     if (item.scheduled && item.cyclePeriod && item.cyclePeriod !== 'none') {
         const cycleLabels = { daily: '🔄 Daily', weekly: '🔄 Weekly', monthly: '🔄 Monthly' };
         cycleBadge = `<span class="history-item-cycle">${cycleLabels[item.cyclePeriod] || item.cyclePeriod}</span>`;
     }
-    
-    return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${chLabel}</span>${cycleBadge}${statusHtml}</div>`;
+
+    return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0, 60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${chLabel}</span>${cycleBadge}${statusHtml}</div>`;
 }
 
 function renderHistory() {
@@ -522,7 +708,7 @@ scheduleToggle.addEventListener('click', () => {
     isScheduled = !isScheduled;
     schedulePicker.classList.toggle('hidden', !isScheduled);
     scheduleToggle.classList.toggle('active', isScheduled);
-    if (isScheduled) { const d = new Date(Date.now() + 5*60000); scheduleTime.value = d.toISOString().slice(0,16); }
+    if (isScheduled) { const d = new Date(Date.now() + 5 * 60000); scheduleTime.value = d.toISOString().slice(0, 16); }
     updateSendButton();
 });
 scheduleCancel.addEventListener('click', () => { isScheduled = false; schedulePicker.classList.add('hidden'); scheduleToggle.classList.remove('active'); scheduleTime.value = ''; updateSendButton(); });
@@ -530,61 +716,65 @@ scheduleCancel.addEventListener('click', () => { isScheduled = false; schedulePi
 // ==============================
 // DRAG & DROP
 // ==============================
-['dragenter','dragover','dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }, false));
-['dragenter','dragover'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.add('dragover'), false));
-['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'), false));
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }, false));
+['dragenter', 'dragover'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.add('dragover'), false));
+['dragleave', 'drop'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'), false));
 dropZone.addEventListener('drop', e => addFiles(e.dataTransfer.files), false);
-dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('click', (e) => {
+    if (!e.target.closest('.cloud-pickers')) fileInput.click();
+});
 fileInput.addEventListener('change', e => { addFiles(e.target.files); fileInput.value = ''; });
 
 function addFiles(fl) {
     for (const f of fl) { if (!selectedFiles.some(s => s.name === f.name && s.size === f.size)) selectedFiles.push(f); }
-    if (selectedFiles.length > 10) { selectedFiles = selectedFiles.slice(0,10); showStatus('Max 10 files.', 'error'); }
+    if (selectedFiles.length > 10) { selectedFiles = selectedFiles.slice(0, 10); showStatus('Max 10 files.', 'error'); }
     renderFileList();
 }
 previewModalClose.addEventListener('click', () => {
     previewModal.classList.add('hidden');
-    previewImage.src = '';
-});
-previewModal.addEventListener('click', (e) => {
-    if (e.target === previewModal) {
-        previewModal.classList.add('hidden');
-        previewImage.src = '';
-    }
+    previewContent.innerHTML = '';
 });
 
 function renderFileList() {
     if (!selectedFiles.length) { fileListDiv.classList.add('hidden'); updateSendButton(); return; }
     fileListDiv.classList.remove('hidden'); fileListDiv.innerHTML = '';
     selectedFiles.forEach((file, i) => {
-        const over = file.size > MAX_FILE_SIZE; 
+        const over = file.size > MAX_FILE_SIZE;
         const isImg = file.type.startsWith('image/');
-        const isPdf = file.type === 'application/pdf';
-        
+
         const item = document.createElement('div'); item.className = `file-item${over ? ' oversized' : ''}`;
         const safeName = escapeHTML(file.name);
-        
-        let thumbHtml = '';
-        if (isImg) thumbHtml = `<img class="file-item-thumb previewable" src="${URL.createObjectURL(file)}" data-index="${i}">`;
-        else if (isPdf) thumbHtml = `<div class="file-item-thumb previewable pdf-icon" data-index="${i}">📄</div>`;
 
-        item.innerHTML = `${thumbHtml}
+        let thumbHtml = '';
+        if (isImg) {
+            thumbHtml = `<img class="file-item-thumb previewable" src="${URL.createObjectURL(file)}" data-index="${i}">`;
+        } else {
+            const icon = getFileIcon(file.name, file.type);
+            const iconClass = getIconClass(file.name);
+            thumbHtml = `<div class="file-item-icon previewable ${iconClass}" data-index="${i}">${icon}</div>`;
+        }
+
+        item.innerHTML = `
+            <input type="checkbox" class="file-zip-checkbox" data-index="${i}" style="margin-right:10px; cursor:pointer;">
+            ${thumbHtml}
             <div class="file-item-info"><span class="file-item-name" title="${safeName}">${safeName}</span>
-            <span class="file-item-size">${over ? '<span class="zip-badge">Will auto-zip</span> ' : ''}${formatSize(file.size)}</span></div>
+            <span class="file-item-size">
+                ${over ? '<span class="zip-badge">Auto-Zip</span> ' : ''}
+                ${formatSize(file.size)}
+            </span></div>
             <button class="file-item-remove" data-index="${i}">✕</button>`;
         fileListDiv.appendChild(item);
     });
-    
-    fileListDiv.querySelectorAll('.file-item-remove').forEach(b => b.addEventListener('click', e => { selectedFiles.splice(parseInt(e.target.dataset.index),1); renderFileList(); }));
+
+    const fileActions = document.getElementById('file-actions');
+    if (fileActions) {
+        if (selectedFiles.length > 1) fileActions.classList.remove('hidden');
+        else fileActions.classList.add('hidden');
+    }
+
+    fileListDiv.querySelectorAll('.file-item-remove').forEach(b => b.addEventListener('click', e => { selectedFiles.splice(parseInt(e.target.dataset.index), 1); renderFileList(); }));
     fileListDiv.querySelectorAll('.previewable').forEach(el => el.addEventListener('click', e => {
-        const file = selectedFiles[parseInt(e.currentTarget.dataset.index)];
-        if (file.type.startsWith('image/')) {
-            previewImage.src = URL.createObjectURL(file);
-            previewImage.classList.remove('hidden');
-            previewModal.classList.remove('hidden');
-        } else if (file.type === 'application/pdf') {
-            window.open(URL.createObjectURL(file), '_blank');
-        }
+        openPreview(parseInt(e.currentTarget.dataset.index));
     }));
     updateSendButton();
 }
@@ -602,14 +792,43 @@ function updateSendButton() {
 }
 messageInput.addEventListener('input', updateSendButton);
 
+document.getElementById('btn-zip-selected')?.addEventListener('click', async () => {
+    const checkboxes = document.querySelectorAll('.file-zip-checkbox:checked');
+    if (checkboxes.length === 0) { showStatus('Select files to zip', 'error'); return; }
+    showStatus('Zipping selected files...', 'info');
+    try {
+        if (typeof JSZip === 'undefined') throw new Error("JSZip not loaded");
+        const zip = new JSZip();
+        const indices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index)).sort((a, b) => b - a);
+        
+        indices.forEach(i => {
+            const file = selectedFiles[i];
+            zip.file(file.name, file);
+        });
+
+        const content = await zip.generateAsync({ type: 'blob' });
+        const zipFile = new File([content], `archive_${Date.now()}.zip`, { type: 'application/zip' });
+        
+        // Remove zipped files and add the new zip
+        indices.forEach(i => selectedFiles.splice(i, 1));
+        selectedFiles.push(zipFile);
+        
+        renderFileList();
+        showStatus('Files zipped successfully!', 'success');
+    } catch (e) {
+        console.error('Zipping failed:', e);
+        showStatus(`Failed to zip: ${e.message}`, 'error');
+    }
+});
+
 // ==============================
 // AUTO-ZIP
 // ==============================
 async function prepareFiles() {
     const prepared = [];
-    for (const file of selectedFiles) {
+    for (let file of selectedFiles) {
         if (file.size > MAX_FILE_SIZE && typeof JSZip !== 'undefined') {
-            showStatus(`Compressing ${file.name}...`, 'info');
+            sendBtnText.textContent = t('status_zipping', { name: file.name });
             const zip = new JSZip(); zip.file(file.name, file);
             const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
             prepared.push(new File([blob], file.name.replace(/\.[^.]+$/, '') + '.zip', { type: 'application/zip' }));
@@ -627,19 +846,19 @@ async function handleSend() {
     let target;
     if (activeChannel === 'telegram') {
         target = chatIdInput.value.trim();
-        if (!target) { showStatus('Enter a Telegram username.', 'error'); chatIdInput.focus(); return; }
+        if (!target) { showStatus(t('status_enter_telegram'), 'error'); chatIdInput.focus(); return; }
     } else if (activeChannel === 'email') {
         target = emailToInput.value.trim();
-        if (!target) { showStatus('Enter at least one email address.', 'error'); emailToInput.focus(); return; }
+        if (!target) { showStatus(t('status_enter_email'), 'error'); emailToInput.focus(); return; }
     } else {
         const rawPhones = waPhoneInput.value.split(',').map(s => s.trim()).filter(Boolean);
-        if (rawPhones.length === 0) { showStatus('Enter at least one phone number.', 'error'); waPhoneInput.focus(); return; }
-        
+        if (rawPhones.length === 0) { showStatus(t('status_enter_phone'), 'error'); waPhoneInput.focus(); return; }
+
         let validTargets = [];
         for (const p of rawPhones) {
             const digitsOnly = p.replace(/\D/g, '');
             if (digitsOnly.length !== selectedCountry.digits) {
-                showStatus(`Number '${p}' must be exactly ${selectedCountry.digits} digits for ${selectedCountry.name}.`, 'error');
+                showStatus(t('status_invalid_phone', { p, digits: selectedCountry.digits, name: selectedCountry.name }), 'error');
                 waPhoneInput.focus();
                 return;
             }
@@ -649,7 +868,7 @@ async function handleSend() {
     }
 
     sendBtn.disabled = true;
-    sendBtnText.textContent = 'Securing payload...';
+    sendBtnText.textContent = t('status_securing');
     let filesToSend = await prepareFiles();
     let message = messageInput.value.trim();
 
@@ -659,7 +878,7 @@ async function handleSend() {
         const { publicKey } = await keyRes.json();
         const rsaPubKey = await importRsaPublicKey(publicKey);
         const aesKey = await generateAesKey();
-        
+
         const encryptedAesKey = await encryptAesKeyWithRsa(rsaPubKey, aesKey);
         formData.append('encryptedAesKey', encryptedAesKey);
 
@@ -670,13 +889,13 @@ async function handleSend() {
         }
 
         for (const f of filesToSend) {
-            sendBtnText.textContent = `Encrypting ${f.name}...`;
+            sendBtnText.textContent = t('status_encrypting', { name: f.name });
             const encryptedBlob = await encryptFileChunked(aesKey, f);
             const encFile = new File([encryptedBlob], f.name, { type: 'application/octet-stream' });
             formData.append('files', encFile);
         }
     } catch (e) {
-        showStatus('Encryption failed: ' + e.message, 'error');
+        showStatus(t('status_encryption_failed', { error: e.message }), 'error');
         sendBtn.disabled = false;
         updateSendButton();
         return;
@@ -684,6 +903,7 @@ async function handleSend() {
 
     formData.append('channel', activeChannel);
     formData.append('chatId', target);
+
     if (activeChannel === 'email') {
         const senderName = document.getElementById('senderName').value.trim();
         if (senderName) formData.append('senderName', senderName);
@@ -696,10 +916,17 @@ async function handleSend() {
         }
     }
 
-
-    // Send session ID for server-side session lookup
     if (activeChannel === 'whatsapp' && verifiedPhone) {
         formData.append('waSessionId', verifiedPhone);
+    }
+
+    // Handle Offline
+    if (!navigator.onLine) {
+        queueOfflineTransfer(formData);
+        showStatus(t('status_offline_queued'), 'success');
+        selectedFiles = []; renderFileList(); messageInput.value = '';
+        sendBtn.disabled = false; updateSendButton();
+        return;
     }
 
     progressContainer.classList.remove('hidden');
@@ -718,12 +945,12 @@ async function handleSend() {
                 playWhoosh();
                 showStatus(`${result.message} 🚀`, 'success');
                 const displayTarget = activeChannel === 'whatsapp' ? `${selectedCountry.code} ${waPhoneInput.value}` : target;
-                addHistoryEntry({ 
-                    to: displayTarget, 
-                    files: filesToSend.map(f => f.name), 
-                    message: message, 
-                    time: new Date().toLocaleString(), 
-                    scheduled: !!result.scheduled, 
+                addHistoryEntry({
+                    to: displayTarget,
+                    files: filesToSend.map(f => f.name),
+                    message: message,
+                    time: new Date().toLocaleString(),
+                    scheduled: !!result.scheduled,
                     channel: activeChannel,
                     jobId: result.jobId || null,
                     scheduledTime: result.scheduled ? new Date(scheduleTime.value).toISOString() : null,
@@ -732,7 +959,7 @@ async function handleSend() {
                 selectedFiles = []; renderFileList(); messageInput.value = '';
                 if (isScheduled) { isScheduled = false; schedulePicker.classList.add('hidden'); scheduleToggle.classList.remove('active'); scheduleTime.value = ''; }
             } else {
-                showStatus(`Error: ${result.error}`, 'error');
+                showStatus(`${t('status_error')}: ${result.error}`, 'error');
                 if (xhr.status === 403) {
                     waAccessVerified = false;
                     verifiedPhone = '';
@@ -740,10 +967,10 @@ async function handleSend() {
                     setChannel('whatsapp');
                 }
             }
-        } catch { showStatus('Unexpected response.', 'error'); }
+        } catch { showStatus(t('status_unexpected'), 'error'); }
         sendBtn.disabled = false; updateSendButton();
     });
-    xhr.addEventListener('error', () => { progressContainer.classList.add('hidden'); showStatus('Network error.', 'error'); sendBtn.disabled = false; updateSendButton(); });
+    xhr.addEventListener('error', () => { progressContainer.classList.add('hidden'); showStatus(t('status_network_error'), 'error'); sendBtn.disabled = false; updateSendButton(); });
     xhr.send(formData);
 }
 
@@ -753,7 +980,7 @@ function showStatus(text, type) {
 }
 function formatSize(b) { if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; return (b / 1048576).toFixed(1) + ' MB'; }
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => { });
 
 // ==============================
 // INIT
@@ -796,7 +1023,7 @@ adminClose.addEventListener('click', () => {
     adminPanel.classList.add('hidden');
     adminToggle.classList.remove('active');
     if (adminInterval) clearInterval(adminInterval);
-    
+
     // Clear session on close so it asks for password again next time
     adminPassword = '';
     localStorage.removeItem('bridge_admin_pw');
@@ -817,10 +1044,19 @@ async function handleAdminLogin() {
         });
         const data = await res.json();
         if (data.valid) {
-            adminPassword = pwd;
-            localStorage.setItem('bridge_admin_pw', pwd);
-            adminLoginError.classList.add('hidden');
-            showAdminContent();
+            if (data.needs2fa) {
+                adminLoginError.classList.add('hidden');
+                admin2faSection.classList.remove('hidden');
+                adminLoginBtn.classList.add('hidden');
+                adminPasswordInput.disabled = true;
+                showToast(t('toast_2fa_required'), 'info');
+            } else {
+                adminPassword = pwd;
+                localStorage.setItem('bridge_admin_pw', pwd);
+                adminLoginError.classList.add('hidden');
+                showAdminContent();
+                refreshAnalytics();
+            }
         } else {
             adminLoginError.classList.remove('hidden');
         }
@@ -896,6 +1132,7 @@ async function loadAdminData() {
 
         // Logs
         loadLogs();
+        if (typeof refreshAnalytics === 'function') refreshAnalytics();
     } catch (e) { console.error('Admin data load error', e); }
 }
 
@@ -909,9 +1146,9 @@ async function loadLogs() {
             const cls = isFatal ? 'fatal' : isErr ? 'error' : isWarn ? 'warn' : 'info';
             return `<div class="admin-log-line ${cls}">${escapeHTML(line)}</div>`;
         }).join('') : '<div class="admin-log-line">No logs yet today.</div>';
-    } catch(e){}
+    } catch (e) { }
 }
-adminRefreshLogs.addEventListener('click', loadLogs);
+adminRefreshLogs?.addEventListener('click', loadLogs);
 
 // ==============================
 // GOOGLE DRIVE PICKER
@@ -961,7 +1198,8 @@ async function getGDriveOAuthToken() {
     });
 }
 
-btnGdrive.addEventListener('click', async () => {
+document.getElementById('btn-gdrive')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const hasConfig = await loadDriveConfig();
     if (!hasConfig) {
         alert('Google Drive Picker: Please configure your API key in the server/environment to use this feature.');
@@ -1099,10 +1337,11 @@ async function encryptAesKeyWithRsa(rsaPubKey, aesKey) {
 // ==============================
 // DROPBOX PICKER
 // ==============================
-btnDropbox.addEventListener('click', () => {
+document.getElementById('btn-dropbox')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (typeof Dropbox === 'undefined') return alert('Dropbox SDK not loaded.');
     Dropbox.choose({
-        success: function(files) {
+        success: function (files) {
             files.forEach(f => {
                 fetch(f.link).then(r => r.blob()).then(blob => {
                     const file = new File([blob], f.name, { type: blob.type });
@@ -1112,8 +1351,237 @@ btnDropbox.addEventListener('click', () => {
                 });
             });
         },
-        cancel: function() {},
+        cancel: function () { },
         linkType: 'direct',
         multiselect: true
     });
 });
+
+// ==============================
+// v4.0 NEW LOGIC
+// ==============================
+
+// Admin Analytics
+let analyticsChart = null;
+async function refreshAnalytics() {
+    try {
+        const res = await fetch('/api/admin/analytics', {
+            headers: { 'x-admin-password': adminPassword, 'x-admin-2fa': admin2faToken.value }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const ctx = document.getElementById('transfers-chart').getContext('2d');
+        if (analyticsChart) analyticsChart.destroy();
+
+        analyticsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.history.map(h => h._id),
+                datasets: [{
+                    label: t('analytics_transfers'),
+                    data: data.history.map(h => h.count),
+                    borderColor: '#0088cc',
+                    backgroundColor: 'rgba(0, 136, 204, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    x: { grid: { display: false } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    } catch (e) { console.error('Analytics error', e); }
+}
+
+// Admin 2FA Setup
+async function setupAdmin2fa() {
+    try {
+        const res = await fetch('/api/admin/2fa/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: adminPasswordInput.value })
+        });
+        const data = await res.json();
+        if (data.qrCode) {
+            admin2faQrContainer.classList.remove('hidden');
+            admin2faQr.innerHTML = `<img src="${data.qrCode}" style="width: 150px; height: 150px; border-radius: 8px;">`;
+        }
+    } catch (e) { console.error('2FA Setup failed', e); }
+}
+
+// PWA: Offline Queue
+function queueOfflineTransfer(payload) {
+    offlineQueue.push({ id: Date.now(), payload, timestamp: new Date().toISOString() });
+    localStorage.setItem('bridge_offline_queue', JSON.stringify(offlineQueue));
+    updateOfflineIndicator();
+}
+
+function updateOfflineIndicator() {
+    if (offlineQueue.length > 0) {
+        offlineIndicator.classList.remove('hidden');
+        offlineIndicator.innerHTML = t('offline_queued', { count: offlineQueue.length });
+    } else {
+        offlineIndicator.classList.add('hidden');
+    }
+}
+
+async function syncOfflineQueue() {
+    if (!navigator.onLine || offlineQueue.length === 0) return;
+
+    showToast(t('toast_syncing_queue'), 'info');
+    const queue = [...offlineQueue];
+    offlineQueue = [];
+    localStorage.setItem('bridge_offline_queue', '[]');
+
+    for (const item of queue) {
+        try {
+            await fetch('/api/upload', { method: 'POST', body: item.payload });
+        } catch (e) {
+            console.error('Failed to sync item', e);
+            offlineQueue.push(item); // Put back
+        }
+    }
+    localStorage.setItem('bridge_offline_queue', JSON.stringify(offlineQueue));
+    updateOfflineIndicator();
+}
+
+window.addEventListener('online', syncOfflineQueue);
+
+// PWA: Push Notifications
+async function initPush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const res = await fetch('/api/push/vapid-key');
+        const { publicKey } = await res.json();
+        if (!publicKey) return;
+
+        const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: publicKey
+        });
+
+        await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(subscription)
+        });
+    } catch (e) { console.warn('Push registration failed', e); }
+}
+
+// Enhanced Preview
+function openPreview(index) {
+    currentPreviewIndex = index;
+    const file = selectedFiles[index];
+    if (!file) return;
+
+    previewModal.classList.remove('hidden');
+    previewContent.innerHTML = '<div class="wa-qr-loading">Loading...</div>';
+    previewInfo.innerText = `${file.name} (${formatSize(file.size)}) - ${index + 1}/${selectedFiles.length}`;
+
+    const reader = new FileReader();
+    if (file.type.startsWith('image/')) {
+        reader.onload = (e) => {
+            previewContent.innerHTML = `<img src="${e.target.result}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+        };
+        reader.readAsDataURL(file);
+    } else if (file.type.startsWith('video/')) {
+        reader.onload = (e) => {
+            previewContent.innerHTML = `<video src="${e.target.result}" controls autoplay style="max-width:100%; max-height:100%;"></video>`;
+        };
+        reader.readAsDataURL(file);
+    } else if (file.type.startsWith('audio/')) {
+        reader.onload = (e) => {
+            previewContent.innerHTML = `<audio src="${e.target.result}" controls autoplay style="width: 100%;"></audio>`;
+        };
+        reader.readAsDataURL(file);
+    } else if (file.type === 'application/pdf') {
+        reader.onload = (e) => {
+            previewContent.innerHTML = `<iframe src="${e.target.result}" style="width:100%; height:80vh; border:none; background:white;"></iframe>`;
+        };
+        reader.readAsDataURL(file);
+    } else {
+        reader.onload = (e) => {
+            const text = e.target.result;
+            const safeText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            previewContent.innerHTML = `<pre class="line-numbers"><code class="language-auto">${safeText}</code></pre>`;
+            Prism.highlightAllUnder(previewContent);
+        };
+        reader.readAsText(file.slice(0, 50000)); // First 50KB
+    }
+}
+
+previewPrev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentPreviewIndex > 0) openPreview(currentPreviewIndex - 1);
+});
+previewNext.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentPreviewIndex < selectedFiles.length - 1) openPreview(currentPreviewIndex + 1);
+});
+
+// Event Listeners for v4.0
+langToggle.addEventListener('click', () => langDropdown.classList.toggle('hidden'));
+document.querySelectorAll('[data-lang]').forEach(btn => {
+    btn.addEventListener('click', () => switchLanguage(btn.getAttribute('data-lang')));
+});
+
+document.getElementById('btn-folder')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    folderInput.click();
+});
+folderInput.addEventListener('change', (e) => handleFolder(Array.from(e.target.files)));
+
+adminDownloadLogsBtn.addEventListener('click', () => {
+    const pw = adminPasswordInput.value;
+    const tkn = admin2faToken.value;
+    window.location.href = `/api/admin/logs/export?adminPassword=${pw}&admin2faToken=${tkn}`;
+});
+
+admin2faVerifyBtn.addEventListener('click', async () => {
+    const pwd = adminPasswordInput.value;
+    const res = await fetch('/api/admin/verify-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd, token: admin2faToken.value })
+    });
+    const data = await res.json();
+    if (data.valid) {
+        adminPassword = pwd;
+        localStorage.setItem('bridge_admin_pw', pwd);
+        adminLoginError.classList.add('hidden');
+        showAdminContent();
+        if (typeof refreshAnalytics === 'function') refreshAnalytics();
+    } else {
+        adminLoginError.classList.remove('hidden');
+        adminLoginError.innerText = data.error || t('admin_login_error');
+    }
+});
+
+// On Init
+window.addEventListener('load', () => {
+    initI18n();
+    updateOfflineIndicator();
+    if (navigator.onLine) syncOfflineQueue();
+    initPush();
+});
+
+// Share Target API Handling
+if ('serviceWorker' in navigator && window.location.search.includes('share_title')) {
+    const params = new URLSearchParams(window.location.search);
+    const title = params.get('share_title');
+    const text = params.get('share_text');
+    const url = params.get('share_url');
+    if (title || text || url) {
+        messageInput.value = `${title ? title + '\n' : ''}${text ? text + '\n' : ''}${url || ''}`;
+        updateSendButton();
+    }
+}
