@@ -89,7 +89,7 @@ app.use((req, res, next) => {
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self';");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com https://accounts.google.com https://www.dropbox.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; img-src 'self' data: blob:; connect-src 'self' https://www.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com;");
     next();
 });
 
@@ -250,7 +250,10 @@ const smtpConfig = {
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
-    }
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
 };
 let transporter = null;
 if (smtpConfig.auth.user && smtpConfig.auth.pass) {
@@ -496,13 +499,29 @@ async function sendEmail(emailTo, text, files, senderName) {
 
     const attachments = files.map(f => ({ filename: f.originalname, path: path.resolve(f.path) }));
     const displayName = senderName ? `${senderName} (via Bridge)` : 'Bridge Secure Transfer';
+    const escapedText = text ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') : '';
     
     try {
         await transporter.sendMail({
             from: `"${displayName}" <${smtpConfig.auth.user}>`,
             to: emailTo,
-            subject: 'Secure File Transfer via Bridge',
+            replyTo: smtpConfig.auth.user,
+            subject: `${senderName ? senderName + ' sent you' : 'You received'} a secure transfer via Bridge`,
             text: text || 'You have received files via Bridge.',
+            html: `<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+                <div style="background:linear-gradient(135deg,#0088cc,#00c6ff);padding:20px 24px;border-radius:12px 12px 0 0;">
+                    <h2 style="color:#fff;margin:0;font-size:20px;">📨 Bridge Secure Transfer</h2>
+                </div>
+                <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                    ${escapedText ? `<p style="font-size:15px;line-height:1.6;color:#333;white-space:pre-wrap;">${escapedText}</p>` : ''}
+                    ${attachments.length ? `<div style="margin-top:16px;padding:12px 16px;background:#e8f4fd;border-radius:8px;">
+                        <p style="margin:0;color:#0088cc;font-weight:600;">📎 ${attachments.length} file${attachments.length > 1 ? 's' : ''} attached</p>
+                    </div>` : ''}
+                    ${!escapedText && !attachments.length ? '<p style="color:#666;">You have received a transfer via Bridge.</p>' : ''}
+                    <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+                    <p style="color:#9ca3af;font-size:11px;margin:0;">Sent securely via Bridge · Files are encrypted in transit</p>
+                </div>
+            </div>`,
             attachments: attachments
         });
         results.textSent = !!text;
@@ -573,6 +592,16 @@ try {
 // Provide the Server's RSA Public Key for Client-to-Server Encryption
 app.get('/api/security/key', (req, res) => {
     res.json({ publicKey });
+});
+
+// Google Drive Picker configuration
+app.get('/api/gdrive/config', (req, res) => {
+    const apiKey = process.env.GOOGLE_API_KEY || '';
+    const clientId = process.env.GOOGLE_CLIENT_ID || '';
+    if (!apiKey || !clientId) {
+        return res.json({ apiKey: null, clientId: null });
+    }
+    res.json({ apiKey, clientId });
 });
 
 // WhatsApp session — creates/restores session by client-provided sessionId
@@ -775,17 +804,52 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                     textMessage = decryptedMsg;
                 }
 
+                // Chunked file decryption
+                // Format: [4-byte chunk length][12-byte IV][ciphertext + 16-byte GCM tag] per chunk
                 for (const f of files) {
                     const filePath = path.resolve(f.path);
                     const fileBuf = fs.readFileSync(filePath);
-                    const iv = fileBuf.subarray(0, 12);
-                    const cipherText = fileBuf.subarray(12);
-                    const authTag = cipherText.subarray(cipherText.length - 16);
-                    const actualCipher = cipherText.subarray(0, cipherText.length - 16);
-                    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, iv);
-                    decipher.setAuthTag(authTag);
-                    const decryptedBuf = Buffer.concat([decipher.update(actualCipher), decipher.final()]);
-                    fs.writeFileSync(filePath, decryptedBuf);
+                    
+                    // Detect chunked format: first 4 bytes are a length header
+                    // A chunked file always starts with a 4-byte big-endian uint32
+                    const possibleLen = fileBuf.readUInt32BE(0);
+                    const isChunked = possibleLen > 0 && possibleLen < fileBuf.length && (possibleLen + 4) <= fileBuf.length;
+                    
+                    if (isChunked) {
+                        // Chunked decryption
+                        const decryptedChunks = [];
+                        let offset = 0;
+                        while (offset < fileBuf.length) {
+                            if (offset + 4 > fileBuf.length) break;
+                            const chunkLen = fileBuf.readUInt32BE(offset);
+                            offset += 4;
+                            if (offset + chunkLen > fileBuf.length) break;
+                            
+                            const chunkPayload = fileBuf.subarray(offset, offset + chunkLen);
+                            const chunkIV = chunkPayload.subarray(0, 12);
+                            const chunkCipher = chunkPayload.subarray(12);
+                            const chunkAuthTag = chunkCipher.subarray(chunkCipher.length - 16);
+                            const chunkActualCipher = chunkCipher.subarray(0, chunkCipher.length - 16);
+                            
+                            const decipher = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, chunkIV);
+                            decipher.setAuthTag(chunkAuthTag);
+                            decryptedChunks.push(decipher.update(chunkActualCipher));
+                            decryptedChunks.push(decipher.final());
+                            
+                            offset += chunkLen;
+                        }
+                        fs.writeFileSync(filePath, Buffer.concat(decryptedChunks));
+                    } else {
+                        // Legacy single-shot decryption (backward compat)
+                        const iv = fileBuf.subarray(0, 12);
+                        const cipherText = fileBuf.subarray(12);
+                        const authTag = cipherText.subarray(cipherText.length - 16);
+                        const actualCipher = cipherText.subarray(0, cipherText.length - 16);
+                        const decipher = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, iv);
+                        decipher.setAuthTag(authTag);
+                        const decryptedBuf = Buffer.concat([decipher.update(actualCipher), decipher.final()]);
+                        fs.writeFileSync(filePath, decryptedBuf);
+                    }
                 }
             } catch (e) {
                 cleanupFiles(files);
