@@ -356,7 +356,7 @@ async function createOrRestoreSession(phoneId) {
                 activeSessions.delete(oldestKey);
             }
         }
-        session = { socket: null, qr: null, ready: false, lastActivity: Date.now(), connecting: true };
+        session = { socket: null, qr: null, ready: false, lastActivity: Date.now(), connecting: true, pairingCode: null };
         activeSessions.set(phoneId, session);
     }
 
@@ -446,6 +446,110 @@ async function createOrRestoreSession(phoneId) {
     }
 
     return session;
+}
+
+// Request pairing code for phone-based linking (mobile users)
+// Pairing code needs a fresh connection — you can't switch from QR to pairing mid-session
+async function requestSessionPairingCode(sessionId, phoneNumber) {
+    let session = activeSessions.get(sessionId);
+    if (session && session.ready) {
+        return { error: 'Already connected. No pairing needed.' };
+    }
+    if (!db) {
+        return { error: 'Database not connected. Please try again later.' };
+    }
+
+    try {
+        // Close existing socket if any (QR session) — need fresh connection for pairing
+        if (session && session.socket) {
+            try { session.socket.end(); } catch (e) {}
+            session.socket = null;
+        }
+        // Remove old session
+        activeSessions.delete(sessionId);
+        // Clear any stored auth state for this session so we get a fresh registration
+        await clearSessionFromDB(sessionId);
+
+        // Create fresh session
+        const authState = await useMongoDBAuthState(sessionId);
+        const { version } = await fetchLatestBaileysVersion();
+
+        const sock = makeWASocket({
+            auth: authState.state,
+            version,
+            printQRInTerminal: false,
+            logger: pino({ level: 'warn' }),
+            browser: Browsers.windows('Chrome'),
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 30000,
+        });
+
+        session = { socket: sock, qr: null, ready: false, lastActivity: Date.now(), connecting: true, pairingCode: null };
+        activeSessions.set(sessionId, session);
+
+        // Wait for the socket to be ready for pairing (connection.update → connecting)
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Connection timeout')), 15000);
+            sock.ev.on('connection.update', (update) => {
+                const { connection, qr: qrCode } = update;
+                log('INFO', `WA pairing connection update for ${sessionId}`, { connection, hasQR: !!qrCode });
+                if (connection === 'open') {
+                    session.ready = true;
+                    session.connecting = false;
+                    clearTimeout(timeout);
+                    resolve();
+                }
+                if (qrCode) {
+                    // QR received means socket is ready — now request pairing code
+                    clearTimeout(timeout);
+                    resolve();
+                }
+                if (connection === 'close') {
+                    clearTimeout(timeout);
+                    reject(new Error('Connection closed'));
+                }
+            });
+            sock.ev.on('creds.update', authState.saveCreds);
+        });
+
+        if (session.ready) {
+            return { error: 'Already connected. No pairing needed.' };
+        }
+
+        // Now request pairing code
+        const cleanNumber = phoneNumber.replace(/\D/g, '');
+        const code = await sock.requestPairingCode(cleanNumber);
+        session.pairingCode = code;
+
+        // Set up connection handling for the pairing session
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            if (connection === 'open') {
+                session.ready = true;
+                session.connecting = false;
+                session.qr = null;
+                log('INFO', `WhatsApp connected via pairing for ${sessionId}`);
+            }
+            if (connection === 'close') {
+                session.ready = false;
+                session.socket = null;
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                if (statusCode !== DisconnectReason.loggedOut) {
+                    log('INFO', `WhatsApp pairing session reconnecting for ${sessionId}`);
+                    setTimeout(() => createOrRestoreSession(sessionId), 3000);
+                } else {
+                    activeSessions.delete(sessionId);
+                    await clearSessionFromDB(sessionId);
+                }
+            }
+        });
+
+        log('INFO', `Pairing code generated for ${sessionId}: ${code}`);
+        return { pairingCode: code };
+    } catch (e) {
+        log('ERROR', `Pairing code error for ${sessionId}: ${e.message}`);
+        return { error: 'Failed to generate pairing code: ' + e.message };
+    }
 }
 
 // Idle session cleanup every 5 minutes
@@ -646,8 +750,26 @@ app.get('/api/whatsapp/status', (req, res) => {
     session.lastActivity = Date.now();
     res.json({
         ready: session.ready,
-        qr: session.ready ? null : session.qr
+        qr: session.ready ? null : session.qr,
+        pairingCode: session.ready ? null : session.pairingCode
     });
+});
+
+// Request pairing code (for mobile users who can't scan QR)
+app.post('/api/whatsapp/pairing-code', async (req, res) => {
+    const { sessionId, phoneNumber } = req.body || {};
+    if (!sessionId || !phoneNumber) {
+        return res.status(400).json({ error: 'Session ID and phone number required.' });
+    }
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+        return res.status(400).json({ error: 'Invalid phone number.' });
+    }
+    const result = await requestSessionPairingCode(sessionId, cleanPhone);
+    if (result.error) {
+        return res.status(400).json({ error: result.error });
+    }
+    res.json({ pairingCode: result.pairingCode });
 });
 app.delete('/api/jobs/:id', (req, res) => {
     const jobId = req.params.id;
