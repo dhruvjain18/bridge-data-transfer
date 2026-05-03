@@ -99,6 +99,12 @@
             <button class="history-tab active" data-tab="messages">Messages</button>
             <button class="history-tab" data-tab="scheduled">Scheduled Jobs</button>
         </div>
+        <div class="history-channel-filter" id="history-channel-filter">
+            <button class="history-filter-btn active" data-filter="all">All</button>
+            <button class="history-filter-btn" data-filter="telegram">📱 Telegram</button>
+            <button class="history-filter-btn" data-filter="whatsapp">💬 WhatsApp</button>
+            <button class="history-filter-btn" data-filter="email">📧 Email</button>
+        </div>
         <div class="history-body" id="history-body"><p class="history-empty">No transfers yet.</p></div>
     </div>
 
@@ -126,11 +132,27 @@
             <!-- WhatsApp QR Overlay -->
             <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
                 <p>Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
-                <div class="qr-box">
+                <div class="qr-box" id="wa-qr-box">
                     <img id="wa-qr-image" src="" alt="QR" class="hidden">
                     <div id="wa-qr-loading">Creating your session...</div>
                 </div>
                 <p class="wa-qr-hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
+                <div class="wa-pairing-toggle">
+                    <button id="wa-pairing-link" class="wa-pairing-btn">📱 Can't scan? Use pairing code</button>
+                </div>
+                <div class="wa-pairing-section hidden" id="wa-pairing-section">
+                    <p class="wa-pairing-info">Enter your phone number with country code to get a pairing code</p>
+                    <div class="wa-pairing-input-row">
+                        <input type="text" id="wa-pairing-phone" placeholder="e.g. 919876543210" autocomplete="off">
+                        <button id="wa-pairing-submit">Get Code</button>
+                    </div>
+                    <div class="wa-pairing-code hidden" id="wa-pairing-code">
+                        <p class="wa-pairing-label">Your pairing code:</p>
+                        <div class="wa-pairing-digits" id="wa-pairing-digits"></div>
+                        <p class="wa-pairing-help">Open WhatsApp → Linked Devices → Link a Device → <b>Link with phone number instead</b> → Enter this code</p>
+                    </div>
+                    <div class="wa-pairing-error hidden" id="wa-pairing-error"></div>
+                </div>
             </div>
 
             <main id="main-content">
