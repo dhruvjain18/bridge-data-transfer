@@ -516,9 +516,222 @@ body[data-active-channel="whatsapp"] .send-btn:hover { background: #128C7E; box-
     color: var(--danger);
 }
 
+/* WhatsApp Pairing Code */
+.wa-pairing-toggle { margin-top: 14px; }
+.wa-pairing-btn {
+    background: none; border: 1px solid var(--border-color); color: var(--text-secondary);
+    padding: 8px 18px; border-radius: 10px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s;
+}
+.wa-pairing-btn:hover { border-color: var(--whatsapp); color: var(--whatsapp); }
+.wa-pairing-btn.active { border-color: var(--whatsapp); color: var(--whatsapp); background: var(--whatsapp-glow); }
+.wa-pairing-section { margin-top: 14px; animation: fadeIn 0.3s; }
+.wa-pairing-info { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+.wa-pairing-input-row {
+    display: flex; gap: 8px; max-width: 320px; margin: 0 auto;
+}
+.wa-pairing-input-row input {
+    flex: 1; padding: 10px 14px; background: var(--bg-color);
+    border: 1px solid var(--border-color); border-radius: 10px;
+    color: var(--text-primary); font-size: 14px; font-family: 'Inter', sans-serif;
+    outline: none; transition: all 0.2s;
+}
+.wa-pairing-input-row input:focus { border-color: var(--whatsapp); box-shadow: 0 0 0 3px var(--whatsapp-glow); }
+.wa-pairing-input-row button {
+    padding: 10px 18px; background: var(--whatsapp); color: white;
+    border: none; border-radius: 10px; font-size: 13px; font-weight: 600;
+    font-family: 'Inter', sans-serif; cursor: pointer; transition: all 0.2s;
+    white-space: nowrap;
+}
+.wa-pairing-input-row button:hover { opacity: 0.9; }
+.wa-pairing-input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.wa-pairing-code { margin-top: 16px; animation: fadeIn 0.3s; }
+.wa-pairing-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.wa-pairing-digits {
+    display: flex; gap: 6px; justify-content: center; margin-bottom: 12px;
+}
+.wa-pairing-digit {
+    width: 40px; height: 48px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-color); border: 2px solid var(--whatsapp); border-radius: 10px;
+    font-size: 22px; font-weight: 700; color: var(--whatsapp);
+    font-family: 'Inter', monospace; animation: fadeIn 0.3s;
+}
+.wa-pairing-digit.separator {
+    width: 12px; border: none; background: none; font-size: 22px; color: var(--text-muted);
+}
+.wa-pairing-help { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+.wa-pairing-error { font-size: 12px; color: var(--danger); margin-top: 10px; animation: fadeIn 0.2s; }
+
+/* History Channel Filter */
+.history-channel-filter {
+    display: flex; gap: 4px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color); background: var(--surface);
+}
+.history-filter-btn {
+    flex: 1; padding: 6px 8px; border-radius: 8px; font-size: 11px; font-weight: 600;
+    border: 1px solid transparent; background: none; color: var(--text-muted);
+    cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s;
+    white-space: nowrap;
+}
+.history-filter-btn:hover { color: var(--text-secondary); background: var(--surface-hover); }
+.history-filter-btn.active { color: var(--accent); background: var(--code-bg); border-color: rgba(0,136,204,0.2); }
+.history-filter-btn.active[data-filter="whatsapp"] { color: var(--whatsapp); background: var(--whatsapp-glow); border-color: rgba(37,211,102,0.2); }
+.history-filter-btn.active[data-filter="email"] { color: #eab308; background: rgba(250,204,21,0.08); border-color: rgba(250,204,21,0.2); }
+
+/* Cycle Badge */
+.history-item-cycle {
+    display: inline-block; margin-top: 6px; margin-left: 6px; padding: 2px 8px;
+    border-radius: 4px; font-size: 10px; font-weight: 700;
+    background: rgba(139,92,246,0.12); color: #8b5cf6;
+}
+
+/* Email Channel Badge */
+.history-item-channel.email { background: rgba(250,204,21,0.1); color: #eab308; }
+
+/* Email Channel Button Active State */
+.channel-btn.active[data-channel="email"] { border-color: #eab308; background: rgba(250,204,21,0.08); color: #eab308; box-shadow: 0 0 0 2px rgba(250,204,21,0.15); }
+
 @media (max-width: 480px) {
     .container { padding: 24px; }
     .help-chat { width: calc(100vw - 48px); }
     .history-panel { width: 100%; }
     .admin-panel { width: 100%; }
+    .wa-pairing-digit { width: 32px; height: 40px; font-size: 18px; }
+}
+
+/* ============================== */
+/* NEW FEATURES: Cloud, Encryption, Email */
+/* ============================== */
+
+/* Cloud Pickers */
+.cloud-pickers {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin: 10px 0;
+}
+
+.cloud-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.cloud-btn:hover {
+    background: var(--border);
+    transform: translateY(-1px);
+}
+
+/* Encryption Toggle */
+.encryption-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    padding: 10px 15px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.encrypt-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--border);
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--text);
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: var(--primary);
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+    background-color: #fff;
+}
+
+.slider.round {
+    border-radius: 24px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+/* Decrypt Modal */
+.decrypt-modal {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.decrypt-modal-content {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    padding: 30px;
+    border-radius: 16px;
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.decrypt-modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: var(--primary);
+}
+
+.decrypt-modal-content p {
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+.decrypt-modal-content .send-btn {
+    width: 100%;
 }
