@@ -300,6 +300,84 @@ async function checkWaStatus() {
 }
 
 // ==============================
+// WHATSAPP PAIRING CODE (for mobile)
+// ==============================
+const waPairingLink = document.getElementById('wa-pairing-link');
+const waPairingSection = document.getElementById('wa-pairing-section');
+const waPairingPhone = document.getElementById('wa-pairing-phone');
+const waPairingSubmit = document.getElementById('wa-pairing-submit');
+const waPairingCodeDiv = document.getElementById('wa-pairing-code');
+const waPairingDigits = document.getElementById('wa-pairing-digits');
+const waPairingError = document.getElementById('wa-pairing-error');
+const waQrBox = document.getElementById('wa-qr-box');
+
+waPairingLink.addEventListener('click', () => {
+    const isActive = waPairingLink.classList.toggle('active');
+    waPairingSection.classList.toggle('hidden', !isActive);
+    waQrBox.classList.toggle('hidden', isActive);
+    if (isActive) {
+        waPairingLink.textContent = '📷 Show QR code instead';
+    } else {
+        waPairingLink.textContent = '📱 Can\'t scan? Use pairing code';
+        waPairingCodeDiv.classList.add('hidden');
+        waPairingError.classList.add('hidden');
+    }
+});
+
+waPairingSubmit.addEventListener('click', async () => {
+    const phone = waPairingPhone.value.trim().replace(/\D/g, '');
+    if (phone.length < 10) {
+        waPairingError.textContent = 'Please enter a valid phone number with country code (e.g. 919876543210)';
+        waPairingError.classList.remove('hidden');
+        return;
+    }
+    waPairingSubmit.disabled = true;
+    waPairingSubmit.textContent = 'Connecting...';
+    waPairingError.classList.add('hidden');
+    waPairingCodeDiv.classList.add('hidden');
+    try {
+        const sid = localStorage.getItem('bridge_wa_session_phone') || '';
+        const res = await fetch('/api/whatsapp/pairing-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: sid, phoneNumber: phone })
+        });
+        const data = await res.json();
+        if (data.pairingCode) {
+            displayPairingCode(data.pairingCode);
+        } else {
+            waPairingError.textContent = data.error || 'Failed to get pairing code';
+            waPairingError.classList.remove('hidden');
+        }
+    } catch (e) {
+        console.error('Pairing code error:', e);
+        waPairingError.textContent = 'Connection failed: ' + (e.message || 'Please check server is running and try again.');
+        waPairingError.classList.remove('hidden');
+    }
+    waPairingSubmit.disabled = false;
+    waPairingSubmit.textContent = 'Get Code';
+});
+
+function displayPairingCode(code) {
+    waPairingDigits.innerHTML = '';
+    const chars = code.split('');
+    chars.forEach((ch, i) => {
+        if (i === 4) {
+            const sep = document.createElement('div');
+            sep.className = 'wa-pairing-digit separator';
+            sep.textContent = '-';
+            waPairingDigits.appendChild(sep);
+        }
+        const digit = document.createElement('div');
+        digit.className = 'wa-pairing-digit';
+        digit.textContent = ch;
+        digit.style.animationDelay = `${i * 0.05}s`;
+        waPairingDigits.appendChild(digit);
+    });
+    waPairingCodeDiv.classList.remove('hidden');
+}
+
+// ==============================
 // HELP / HISTORY
 // ==============================
 helpFab.addEventListener('click', () => {
@@ -325,6 +403,8 @@ function getHistory() { try { return JSON.parse(localStorage.getItem('bridge_his
 function saveHistory(h) { localStorage.setItem('bridge_history', JSON.stringify(h.slice(-50))); }
 function addHistoryEntry(e) { const h = getHistory(); h.unshift(e); saveHistory(h); }
 let activeHistoryTab = 'messages';
+let activeHistoryFilter = 'all';
+
 document.querySelectorAll('.history-tab').forEach(btn => {
     btn.addEventListener('click', (e) => {
         document.querySelectorAll('.history-tab').forEach(b => b.classList.remove('active'));
@@ -334,29 +414,50 @@ document.querySelectorAll('.history-tab').forEach(btn => {
     });
 });
 
+document.querySelectorAll('.history-filter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.history-filter-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        activeHistoryFilter = e.target.dataset.filter;
+        renderHistory();
+    });
+});
+
 function renderHistoryItem(item) {
     const files = (item.files || []).map(f => `<span>📎 ${escapeHTML(f)}</span>`).join('');
     const ch = item.channel || 'telegram';
     const isFuture = item.scheduledTime && new Date(item.scheduledTime) > new Date() && !item.canceled;
+    const chLabel = ch === 'telegram' ? '📱 TG' : ch === 'whatsapp' ? '💬 WA' : '📧 Email';
     
     let statusHtml = `<span class="history-item-status ${item.scheduled ? 'scheduled' : 'success'}">${item.scheduled ? (item.canceled ? '🚫 Canceled' : '⏰ Scheduled') : '✅ Sent'}</span>`;
     if (isFuture) {
         statusHtml += `<button class="cancel-job-btn" data-id="${item.jobId}">Cancel</button>`;
     }
-    return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${ch === 'telegram' ? '📱 TG' : '💬 WA'}</span>${statusHtml}</div>`;
+    
+    // Cycle badge for recurring scheduled jobs
+    let cycleBadge = '';
+    if (item.scheduled && item.cyclePeriod && item.cyclePeriod !== 'none') {
+        const cycleLabels = { daily: '🔄 Daily', weekly: '🔄 Weekly', monthly: '🔄 Monthly' };
+        cycleBadge = `<span class="history-item-cycle">${cycleLabels[item.cyclePeriod] || item.cyclePeriod}</span>`;
+    }
+    
+    return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0,60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${chLabel}</span>${cycleBadge}${statusHtml}</div>`;
 }
 
 function renderHistory() {
     const history = getHistory();
     if (!history.length) { historyBody.innerHTML = '<p class="history-empty">No transfers yet.</p>'; return; }
 
+    // Apply channel filter
+    const filtered = activeHistoryFilter === 'all' ? history : history.filter(i => (i.channel || 'telegram') === activeHistoryFilter);
+
     let html = '';
     if (activeHistoryTab === 'messages') {
-        const msgs = history.filter(i => !i.scheduled);
+        const msgs = filtered.filter(i => !i.scheduled);
         if (!msgs.length) html = '<p class="history-empty">No instant messages.</p>';
         else html = msgs.map(renderHistoryItem).join('');
     } else {
-        const sched = history.filter(i => i.scheduled);
+        const sched = filtered.filter(i => i.scheduled);
         if (!sched.length) {
             html = '<p class="history-empty">No scheduled jobs.</p>';
         } else {
@@ -625,7 +726,8 @@ async function handleSend() {
                     scheduled: !!result.scheduled, 
                     channel: activeChannel,
                     jobId: result.jobId || null,
-                    scheduledTime: result.scheduled ? new Date(scheduleTime.value).toISOString() : null
+                    scheduledTime: result.scheduled ? new Date(scheduleTime.value).toISOString() : null,
+                    cyclePeriod: (result.scheduled && document.getElementById('schedule-cycle')) ? document.getElementById('schedule-cycle').value : null
                 });
                 selectedFiles = []; renderFileList(); messageInput.value = '';
                 if (isScheduled) { isScheduled = false; schedulePicker.classList.add('hidden'); scheduleToggle.classList.remove('active'); scheduleTime.value = ''; }
