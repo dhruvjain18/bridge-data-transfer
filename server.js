@@ -13,6 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const speakeasy = require('speakeasy');
+const webpush = require('web-push');
 
 // Generate RSA Keypair for Client-to-Server Encryption
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
@@ -208,6 +210,77 @@ function incrementDailyUsage(sessionId) {
 const scheduledJobs = [];
 
 // ==============================
+// VAPID PUSH NOTIFICATIONS SETUP
+// ==============================
+let vapidConfigured = false;
+const pushSubscriptions = [];
+
+function setupVapid() {
+    let publicVapid = process.env.VAPID_PUBLIC_KEY || '';
+    let privateVapid = process.env.VAPID_PRIVATE_KEY || '';
+    const vapidEmail = process.env.VAPID_EMAIL || 'mailto:admin@bridge.app';
+    if (!publicVapid || !privateVapid) {
+        const keys = webpush.generateVAPIDKeys();
+        publicVapid = keys.publicKey;
+        privateVapid = keys.privateKey;
+        log('INFO', 'Auto-generated VAPID keys (set in .env to persist)');
+    }
+    try {
+        webpush.setVapidDetails(`mailto:${vapidEmail}`, publicVapid, privateVapid);
+        vapidConfigured = true;
+        log('INFO', 'VAPID push notifications configured');
+    } catch (e) { log('WARN', `VAPID setup failed: ${e.message}`); }
+}
+
+// ==============================
+// ADMIN 2FA (TOTP)
+// ==============================
+const admin2faSecret = (process.env.ADMIN_2FA_SECRET || '').trim();
+const admin2faEnabled = admin2faSecret.length > 0;
+
+// ==============================
+// HEALTH MONITORING
+// ==============================
+const HEALTH_MEMORY_THRESHOLD = parseInt(process.env.HEALTH_MEMORY_THRESHOLD_MB || '512');
+const ADMIN_TG_CHAT = (process.env.ADMIN_TELEGRAM_CHAT_ID || '').trim();
+const healthAlertCooldowns = {};
+
+function sendHealthAlert(type, message) {
+    const now = Date.now();
+    if (healthAlertCooldowns[type] && (now - healthAlertCooldowns[type]) < 15 * 60 * 1000) return;
+    healthAlertCooldowns[type] = now;
+    log('WARN', `HEALTH ALERT [${type}]: ${message}`);
+    if (telegramBot && ADMIN_TG_CHAT) {
+        telegramBot.sendMessage(ADMIN_TG_CHAT, `⚠️ *Bridge Health Alert*\n\n*${type}*: ${message}`, { parse_mode: 'Markdown' }).catch(() => {});
+    }
+    if (db) {
+        db.collection('health_alerts').insertOne({ type, message, timestamp: new Date() }).catch(() => {});
+    }
+}
+
+let rateLimitViolations = 0;
+setInterval(() => {
+    const memMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    if (memMB > HEALTH_MEMORY_THRESHOLD) sendHealthAlert('MEMORY', `RSS at ${memMB}MB (threshold: ${HEALTH_MEMORY_THRESHOLD}MB)`);
+    if (rateLimitViolations > 20) sendHealthAlert('RATE_LIMIT', `${rateLimitViolations} rate-limit violations in the last minute`);
+    rateLimitViolations = 0;
+}, 60 * 1000);
+
+// ==============================
+// ANALYTICS: Transfer Logging
+// ==============================
+async function logTransfer(channel, recipientCount, fileCount, totalSizeBytes) {
+    if (!db) return;
+    try {
+        await db.collection('transfer_logs').insertOne({
+            channel, recipientCount, fileCount, totalSizeBytes,
+            timestamp: new Date(),
+            hour: new Date().getHours()
+        });
+    } catch (e) { log('ERROR', `Analytics log failed: ${e.message}`); }
+}
+
+// ==============================
 // TELEGRAM BOT
 // ==============================
 const telegramToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -215,13 +288,15 @@ let telegramBot = null;
 
 if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
     telegramBot = new TelegramBot(telegramToken, { polling: { params: { timeout: 30 }, interval: 2000 } });
-    telegramBot.getMe().then(info => log('INFO', `Telegram Bot connected: @${info.username}`))
-        .catch(err => { log('ERROR', `Telegram Bot invalid: ${err.message}`); telegramBot = null; });
-
+    
     telegramBot.on('polling_error', (err) => {
         if (err?.message?.includes('409 Conflict')) log('WARN', 'Telegram polling conflict (another instance running)');
         else log('ERROR', `Telegram polling error: ${err.message}`);
     });
+
+    telegramBot.on('error', (error) => log('ERROR', `Telegram bot error: ${error.message}`));
+    telegramBot.getMe().then(info => log('INFO', `Telegram Bot connected: @${info.username}`))
+        .catch(err => { log('ERROR', `Telegram Bot invalid: ${err.message}`); telegramBot = null; });
 
     telegramBot.onText(/\/start/, async (msg) => {
         const chatId = msg.chat.id;
@@ -580,16 +655,26 @@ function formatWhatsAppNumber(phone) {
     return num + '@s.whatsapp.net';
 }
 
-async function sendTelegram(chatId, text, files) {
+async function sendTelegram(chatId, text, files, selfDestruct = false) {
     const results = { textSent: false, filesSent: 0, errors: [] };
-    if (text) {
-        try { await telegramBot.sendMessage(chatId, text); results.textSent = true; }
+    const textMsg = selfDestruct ? `🔥 *SELF-DESTRUCT MESSAGE*\n\n${text}` : text;
+    
+    if (textMsg) {
+        try { 
+            await telegramBot.sendMessage(chatId, textMsg, { parse_mode: 'Markdown' }); 
+            results.textSent = true; 
+        }
         catch (e) { results.errors.push(`Text: ${e.message}`); }
     }
     for (const file of files) {
         try {
-            await telegramBot.sendDocument(chatId, path.resolve(file.path), { caption: file.originalname }, {
-                filename: file.originalname, contentType: file.mimetype || 'application/octet-stream'
+            const caption = selfDestruct ? `🔥 Self-destruct: ${file.originalname}` : file.originalname;
+            await telegramBot.sendDocument(chatId, path.resolve(file.path), { 
+                caption: caption,
+                protect_content: selfDestruct
+            }, {
+                filename: file.originalname, 
+                contentType: file.mimetype || 'application/octet-stream'
             });
             results.filesSent++;
         } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
@@ -636,7 +721,7 @@ async function sendEmail(emailTo, text, files, senderName) {
     return results;
 }
 
-async function sendWhatsApp(sessionId, chatId, text, files) {
+async function sendWhatsApp(sessionId, chatId, text, files, selfDestruct = false) {
     const session = activeSessions.get(sessionId);
     if (!session || !session.ready || !session.socket) {
         return { textSent: false, filesSent: 0, errors: ['WhatsApp not connected. Please scan QR and try again.'] };
@@ -648,7 +733,8 @@ async function sendWhatsApp(sessionId, chatId, text, files) {
 
     if (text) {
         try {
-            await sock.sendMessage(chatId, { text });
+            const textMsg = selfDestruct ? `🔥 *SELF-DESTRUCT MESSAGE*\n\n${text}` : text;
+            await sock.sendMessage(chatId, { text: textMsg });
             results.textSent = true;
         } catch (e) { results.errors.push(`Text: ${e.message}`); }
     }
@@ -657,15 +743,17 @@ async function sendWhatsApp(sessionId, chatId, text, files) {
         try {
             const buffer = fs.readFileSync(path.resolve(file.path));
             const mime = file.mimetype || 'application/octet-stream';
+            const caption = selfDestruct ? `🔥 Self-destruct: ${file.originalname}` : file.originalname;
+            const common = { caption, mimetype: mime, viewOnce: selfDestruct };
 
             if (mime.startsWith('image/')) {
-                await sock.sendMessage(chatId, { image: buffer, caption: file.originalname, mimetype: mime });
+                await sock.sendMessage(chatId, { image: buffer, ...common });
             } else if (mime.startsWith('video/')) {
-                await sock.sendMessage(chatId, { video: buffer, caption: file.originalname, mimetype: mime });
+                await sock.sendMessage(chatId, { video: buffer, ...common });
             } else if (mime.startsWith('audio/')) {
-                await sock.sendMessage(chatId, { audio: buffer, mimetype: mime });
+                await sock.sendMessage(chatId, { audio: buffer, mimetype: mime, viewOnce: selfDestruct });
             } else {
-                await sock.sendMessage(chatId, { document: buffer, mimetype: mime, fileName: file.originalname });
+                await sock.sendMessage(chatId, { document: buffer, mimetype: mime, fileName: file.originalname, viewOnce: selfDestruct });
             }
             results.filesSent++;
         } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
@@ -809,18 +897,118 @@ app.get('/api/health', (req, res) => {
 const adminPassword = (process.env.ADMIN_PASSWORD || '').trim();
 
 function adminAuth(req, res, next) {
-    const pw = req.headers['x-admin-password'] || req.body?.adminPassword || '';
+    const pw = req.headers['x-admin-password'] || req.body?.adminPassword || req.query?.adminPassword || '';
     if (!adminPassword) return res.status(503).json({ error: 'Admin password not configured.' });
     if (pw !== adminPassword) { log('WARN', 'Admin auth failed', { ip: req.ip }); return res.status(401).json({ error: 'Invalid admin password.' }); }
+    
+    // Check 2FA if enabled
+    if (admin2faEnabled) {
+        const token = req.headers['x-admin-2fa'] || req.body?.admin2faToken || req.query?.admin2faToken || '';
+        if (!token) return res.status(403).json({ error: '2FA token required.', needs2fa: true });
+        const verified = speakeasy.totp.verify({
+            secret: admin2faSecret,
+            encoding: 'base64',
+            token: token
+        });
+        if (!verified) return res.status(401).json({ error: 'Invalid 2FA token.' });
+    }
+    
     next();
 }
 
 app.post('/api/admin/verify', (req, res) => {
     const { password } = req.body || {};
     if (!adminPassword) return res.json({ valid: false });
-    if (password === adminPassword) { log('INFO', 'Admin login', { ip: req.ip }); return res.json({ valid: true }); }
+    if (password === adminPassword) { 
+        log('INFO', 'Admin login step 1 success', { ip: req.ip }); 
+        return res.json({ valid: true, needs2fa: admin2faEnabled }); 
+    }
     log('WARN', 'Admin login failed', { ip: req.ip });
     return res.json({ valid: false });
+});
+
+app.post('/api/admin/verify-2fa', (req, res) => {
+    const { password, token } = req.body || {};
+    if (password !== adminPassword) return res.status(401).json({ valid: false });
+    if (!admin2faEnabled) return res.json({ valid: true });
+    
+    const verified = speakeasy.totp.verify({
+        secret: admin2faSecret,
+        encoding: 'base64',
+        token: token
+    });
+    if (verified) {
+        log('INFO', 'Admin login 2FA success', { ip: req.ip });
+        return res.json({ valid: true });
+    }
+    return res.json({ valid: false, error: 'Invalid 2FA token' });
+});
+
+app.get('/api/admin/analytics', adminAuth, async (req, res) => {
+    if (!db) return res.json({ history: [], channels: {}, hours: [] });
+    try {
+        const last30Days = new Date();
+        last30Days.setDate(last30Days.getDate() - 30);
+        
+        const history = await db.collection('transfer_logs').aggregate([
+            { $match: { timestamp: { $gte: last30Days } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } }
+        ]).toArray();
+        
+        const channels = await db.collection('transfer_logs').aggregate([
+            { $group: { _id: "$channel", count: { $sum: 1 } } }
+        ]).toArray();
+        
+        const hours = await db.collection('transfer_logs').aggregate([
+            { $group: { _id: "$hour", count: { $sum: 1 } } },
+            { $sort: { _id: 1 } }
+        ]).toArray();
+        
+        res.json({ history, channels: Object.fromEntries(channels.map(c => [c._id, c.count])), hours });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/logs/export', adminAuth, (req, res) => {
+    try {
+        const logFile = path.join(LOG_DIR, getLogFileName());
+        if (!fs.existsSync(logFile)) return res.status(404).send('No logs today.');
+        
+        const content = fs.readFileSync(logFile, 'utf-8');
+        const csvRows = ['Timestamp,Level,Message,Metadata'];
+        content.trim().split('\n').forEach(line => {
+            const match = line.match(/^\[(.*?)\] \[(.*?)\] (.*?) (\{.*\}|)$/);
+            if (match) {
+                const [_, ts, lvl, msg, meta] = match;
+                csvRows.push(`"${ts}","${lvl}","${msg.replace(/"/g, '""')}","${meta.replace(/"/g, '""')}"`);
+            }
+        });
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=bridge-logs-${new Date().toISOString().split('T')[0]}.csv`);
+        res.send(csvRows.join('\n'));
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+app.get('/api/admin/health', adminAuth, (req, res) => {
+    const memMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    res.json({
+        status: 'ok',
+        memory: { used: memMB, threshold: HEALTH_MEMORY_THRESHOLD },
+        db: db ? 'connected' : 'disconnected',
+        whatsapp: activeSessions.size,
+        uptime: process.uptime()
+    });
+});
+
+app.get('/api/push/vapid-key', (req, res) => {
+    res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+    const subscription = req.body;
+    pushSubscriptions.push(subscription);
+    res.status(201).json({});
 });
 
 app.get('/api/admin/dashboard', adminAuth, async (req, res) => {
@@ -898,8 +1086,10 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         const encryptedAesKeyB64 = req.body.encryptedAesKey || '';
         const scheduledTime = req.body.scheduledTime || '';
         const cyclePeriod = req.body.cyclePeriod || 'none';
+        const selfDestruct = req.body.selfDestruct === 'true';
 
         const targets = rawTargets.split(',').map(t => t.trim()).filter(Boolean);
+        let totalSizeBytes = files.reduce((acc, f) => acc + f.size, 0);
 
         if (encryptedAesKeyB64) {
             try {
@@ -1012,7 +1202,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                     scheduledJobs.push({
                         id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
                         timer: setTimeout(async () => {
-                            for (const t of resolved) await sendTelegram(t.chatId, textMessage, files);
+                            for (const t of resolved) await sendTelegram(t.chatId, textMessage, files, selfDestruct);
                             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
                             if (cyclePeriod !== 'none') {
                                 const nextDate = new Date();
@@ -1035,11 +1225,12 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
             let totalSent = 0;
             for (const t of resolved) {
-                const r = await sendTelegram(t.chatId, textMessage, files);
+                const r = await sendTelegram(t.chatId, textMessage, files, selfDestruct);
                 totalSent += r.filesSent;
                 if (r.errors.length) log('ERROR', `Telegram errors for ${t.label}`, { errors: r.errors });
             }
             cleanupFiles(files);
+            logTransfer('telegram', resolved.length, files.length, totalSizeBytes);
             return res.json({ success: true, message: `${totalSent + (textMessage ? resolved.length : 0)} item(s) sent to ${resolved.length} recipient(s) via Telegram!` });
 
         // ─── EMAIL ───
@@ -1060,6 +1251,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                 return res.status(500).json({ error: 'Failed to send emails: ' + totalErrors[0] });
             }
             
+            logTransfer('email', targets.length, files.length, totalSizeBytes);
             return res.json({ success: true, message: `${totalSent + (textMessage ? targets.length : 0)} item(s) sent to ${targets.length} recipient(s) via Email!` });
 
         // ─── WHATSAPP ───
@@ -1099,7 +1291,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                     scheduledJobs.push({
                         id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
                         timer: setTimeout(async () => {
-                            for (const t of resolved) await sendWhatsApp(sessionPhone, t.chatId, textMessage, files);
+                            for (const t of resolved) await sendWhatsApp(sessionPhone, t.chatId, textMessage, files, selfDestruct);
                             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
                             if (cyclePeriod !== 'none') {
                                 const nextDate = new Date();
@@ -1122,12 +1314,13 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
             let totalSent = 0, allErrors = [];
             for (const t of resolved) {
-                const r = await sendWhatsApp(sessionPhone, t.chatId, textMessage, files);
+                const r = await sendWhatsApp(sessionPhone, t.chatId, textMessage, files, selfDestruct);
                 totalSent += r.filesSent;
                 if (r.textSent) totalSent++;
                 if (r.errors.length) { log('ERROR', `WhatsApp errors for ${t.label}`, { errors: r.errors }); allErrors.push(...r.errors); }
             }
             cleanupFiles(files);
+            logTransfer('whatsapp', resolved.length, files.length, totalSizeBytes);
 
             if (totalSent === 0 && allErrors.length > 0) {
                 return res.status(502).json({ error: `WhatsApp failed: ${allErrors[0]}` });
@@ -1151,6 +1344,7 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 async function startServer() {
     await connectDB();
     await loadUserMap();
+    setupVapid();
 
     app.listen(port, () => {
         log('INFO', `Bridge Server running at http://localhost:${port}`);
