@@ -220,7 +220,10 @@
                 <!-- Telegram input -->
                 <div class="input-group" id="telegram-input">
                     <label for="chatId" data-i18n="label_telegram_username">Telegram Username</label>
-                    <input type="text" id="chatId" placeholder="@username or @user1, @user2" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="chatId" placeholder="@username or @user1, @user2" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
+                        <ul class="autocomplete-dropdown hidden" id="chatId-autocomplete"></ul>
+                    </div>
                 </div>
 
                 <!-- WhatsApp input -->
@@ -235,7 +238,10 @@
                             </button>
                             <div class="country-dropdown hidden" id="country-dropdown"></div>
                         </div>
-                        <input type="text" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off" data-i18n-placeholder="placeholder_phone">
+                        <div class="autocomplete-wrapper" style="flex: 1;">
+                            <input type="text" id="waPhone" placeholder="9876543210, 9876543211" autocomplete="off" data-i18n-placeholder="placeholder_phone">
+                            <ul class="autocomplete-dropdown hidden" id="waPhone-autocomplete"></ul>
+                        </div>
                     </div>
                     <p class="phone-hint" id="phone-hint"></p>
                 </div>
@@ -245,7 +251,10 @@
                     <label for="senderName"><span data-i18n="label_your_name">Your Name</span> <span class="optional" data-i18n="label_optional">(optional)</span></label>
                     <input type="text" id="senderName" placeholder="e.g. Rahul" autocomplete="off" style="margin-bottom: 12px;" data-i18n-placeholder="placeholder_name">
                     <label for="emailTo"><span data-i18n="label_recipient_email">Recipient Email(s)</span> <span class="optional" data-i18n="label_comma_separated">(comma separated)</span></label>
-                    <input type="text" id="emailTo" placeholder="person@example.com, friend@example.com" autocomplete="off" data-i18n-placeholder="placeholder_email">
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="emailTo" placeholder="person@example.com, friend@example.com" autocomplete="off" data-i18n-placeholder="placeholder_email">
+                        <ul class="autocomplete-dropdown hidden" id="emailTo-autocomplete"></ul>
+                    </div>
                 </div>
 
                 <div class="input-group">
