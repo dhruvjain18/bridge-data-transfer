@@ -972,6 +972,7 @@ async function handleSend() {
                 playWhoosh();
                 showStatus(`${result.message} 🚀`, 'success');
                 const displayTarget = activeChannel === 'whatsapp' ? `${selectedCountry.code} ${waPhoneInput.value}` : target;
+                saveContact(activeChannel, target);
                 addHistoryEntry({
                     to: displayTarget,
                     files: filesToSend.map(f => f.name),
@@ -1015,6 +1016,10 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 window.addEventListener('DOMContentLoaded', async () => {
     const s = localStorage.getItem('telegram_bridge_chat_id');
     if (s) chatIdInput.value = s;
+
+    setupAutocomplete(chatIdInput, 'chatId-autocomplete', 'telegram');
+    setupAutocomplete(waPhoneInput, 'waPhone-autocomplete', 'whatsapp');
+    setupAutocomplete(document.getElementById('emailTo'), 'emailTo-autocomplete', 'email');
 });
 
 // ==============================
@@ -1628,4 +1633,76 @@ if ('serviceWorker' in navigator && window.location.search.includes('share_title
         messageInput.value = `${title ? title + '\n' : ''}${text ? text + '\n' : ''}${url || ''}`;
         updateSendButton();
     }
+}
+
+// ==============================
+// CONTACTS AUTOCOMPLETE
+// ==============================
+function saveContact(channel, rawTarget) {
+    const key = `bridge_contacts_${channel}`;
+    let contacts = JSON.parse(localStorage.getItem(key) || '[]');
+    const newContacts = rawTarget.split(',').map(t => t.trim()).filter(Boolean);
+    
+    let added = false;
+    for (const c of newContacts) {
+        if (!contacts.includes(c)) {
+            contacts.push(c);
+            added = true;
+        }
+    }
+    if (added) {
+        localStorage.setItem(key, JSON.stringify(contacts));
+    }
+}
+
+function setupAutocomplete(inputEl, dropdownId, channelKey) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!inputEl || !dropdown) return;
+
+    document.addEventListener('click', (e) => {
+        if (!inputEl.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    inputEl.addEventListener('input', () => {
+        const val = inputEl.value;
+        const parts = val.split(',');
+        const lastPart = parts[parts.length - 1].trimLeft(); 
+        const query = lastPart.trim().toLowerCase();
+
+        if (query.length < 1) {
+            dropdown.classList.add('hidden');
+            return;
+        }
+
+        const contacts = JSON.parse(localStorage.getItem(`bridge_contacts_${channelKey}`) || '[]');
+        const matches = contacts.filter(c => c.toLowerCase().includes(query) && c.toLowerCase() !== query);
+
+        if (matches.length > 0) {
+            dropdown.innerHTML = '';
+            matches.forEach(match => {
+                const li = document.createElement('li');
+                li.className = 'autocomplete-item';
+                
+                const idx = match.toLowerCase().indexOf(query);
+                const before = match.substring(0, idx);
+                const matchedText = match.substring(idx, idx + query.length);
+                const after = match.substring(idx + query.length);
+                
+                li.innerHTML = `<span>${before}<strong>${matchedText}</strong>${after}</span>`;
+                
+                li.addEventListener('click', () => {
+                    parts[parts.length - 1] = (parts.length > 1 ? ' ' : '') + match;
+                    inputEl.value = parts.join(',') + (channelKey !== 'telegram' ? ', ' : '');
+                    dropdown.classList.add('hidden');
+                    inputEl.focus();
+                });
+                dropdown.appendChild(li);
+            });
+            dropdown.classList.remove('hidden');
+        } else {
+            dropdown.classList.add('hidden');
+        }
+    });
 }
