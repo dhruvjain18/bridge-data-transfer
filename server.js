@@ -23,9 +23,21 @@ const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
 });
 
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
+
 const port = process.env.PORT || 3000;
 app.set('trust proxy', 1);
+
+io.on('connection', (socket) => {
+    socket.on('join_wa_session', (sessionId) => {
+        if (sessionId) socket.join(sessionId);
+    });
+});
 
 // ==============================
 // ERROR MONITORING & LOGGING
@@ -140,8 +152,89 @@ async function connectDB() {
         log('INFO', 'Connected to MongoDB Atlas');
         await db.collection('wa_auth').createIndex({ sessionId: 1 });
         await db.collection('telegram_users').createIndex({ username: 1 }, { unique: true });
+        await db.collection('scheduled_jobs').createIndex({ id: 1 }, { unique: true });
     } catch (e) {
         log('ERROR', `MongoDB connection failed: ${e.message}`);
+    }
+}
+
+async function persistJob(jobData) {
+    if (db) await db.collection('scheduled_jobs').updateOne({ id: jobData.id }, { $set: jobData }, { upsert: true });
+}
+
+async function removeJob(jobId) {
+    if (db) await db.collection('scheduled_jobs').deleteOne({ id: jobId });
+}
+
+async function restoreScheduledJobs() {
+    if (!db) return;
+    try {
+        const jobs = await db.collection('scheduled_jobs').find({}).toArray();
+        for (const job of jobs) {
+            const delayMs = new Date(job.scheduledFor).getTime() - Date.now();
+            if (delayMs < 0 && job.cyclePeriod === 'none') {
+                executeJobNow(job);
+            } else {
+                reScheduleJob(job, Math.max(delayMs, 0));
+            }
+        }
+        log('INFO', `Restored ${jobs.length} scheduled jobs`);
+    } catch (e) {
+        log('ERROR', `Failed to restore jobs: ${e.message}`);
+    }
+}
+
+async function executeJobNow(job) {
+    if (job.channel === 'telegram') {
+        for (const t of job.resolvedTargets) await sendTelegram(t.chatId, job.textMessage, job.files, job.selfDestruct);
+    } else if (job.channel === 'whatsapp') {
+        for (const t of job.resolvedTargets) await sendWhatsApp(job.sessionId, t.chatId, job.textMessage, job.files, job.selfDestruct);
+    }
+    
+    if (job.cyclePeriod !== 'none') {
+        const nextDate = new Date();
+        if (job.cyclePeriod === 'daily') nextDate.setDate(nextDate.getDate() + 1);
+        else if (job.cyclePeriod === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
+        else if (job.cyclePeriod === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+        job.scheduledFor = nextDate.toISOString();
+        await persistJob(job);
+        reScheduleJob(job, nextDate.getTime() - Date.now());
+    } else {
+        await removeJob(job.id);
+        cleanupFiles(job.files);
+    }
+}
+
+function reScheduleJob(job, delayMs) {
+    scheduledJobs.push({
+        id: job.id, targets: job.targets, fileCount: job.files.length, scheduledFor: job.scheduledFor,
+        timer: setTimeout(async () => {
+            await executeJobNow(job);
+            scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === job.id), 1);
+        }, delayMs)
+    });
+}
+
+async function cleanupStaleUploads() {
+    try {
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) return;
+        const stale = fs.readdirSync(uploadsDir);
+        let activePaths = new Set();
+        if (db) {
+            const jobs = await db.collection('scheduled_jobs').find({}).toArray();
+            for (const j of jobs) {
+                if (j.files) j.files.forEach(f => activePaths.add(path.resolve(f.path)));
+            }
+        }
+        let cleaned = 0;
+        for (const f of stale) {
+            const p = path.join(uploadsDir, f);
+            if (!activePaths.has(p)) { fs.unlinkSync(p); cleaned++; }
+        }
+        if (cleaned > 0) log('INFO', `Cleaned ${cleaned} stale upload(s)`);
+    } catch (e) {
+        log('WARN', `Cleanup uploads failed: ${e.message}`);
     }
 }
 
@@ -479,6 +572,7 @@ async function createOrRestoreSession(phoneId) {
                     session.qr = await qrcode.toDataURL(qrCode, { margin: 2, scale: 8 });
                     session.connecting = false;
                     log('INFO', `WhatsApp QR ready for ${phoneId}`);
+                    io.to(phoneId).emit('wa_status_update', { ready: false, qr: session.qr });
                 } catch (e) { log('ERROR', `QR render error: ${e.message}`); }
             }
 
@@ -488,6 +582,8 @@ async function createOrRestoreSession(phoneId) {
                 session.qr = null;
                 sessionRetries.delete(phoneId);
                 log('INFO', `WhatsApp connected for user ${phoneId}`);
+                io.to(phoneId).emit('wa_status_update', { ready: true });
+                io.emit('admin_dashboard_update');
             }
 
             if (connection === 'close') {
@@ -507,6 +603,7 @@ async function createOrRestoreSession(phoneId) {
                     sessionRetries.delete(phoneId);
                     activeSessions.delete(phoneId);
                     log('INFO', `WhatsApp session ended for ${phoneId} (${shouldReconnect ? 'max retries' : 'logged out'})`);
+                    io.to(phoneId).emit('wa_status_update', { ready: false, error: 'Session ended' });
                     if (!shouldReconnect) await clearSessionFromDB(phoneId);
                 }
             }
@@ -604,6 +701,8 @@ async function requestSessionPairingCode(sessionId, phoneNumber) {
                 session.connecting = false;
                 session.qr = null;
                 log('INFO', `WhatsApp connected via pairing for ${sessionId}`);
+                io.to(sessionId).emit('wa_status_update', { ready: true });
+                io.emit('admin_dashboard_update');
             }
             if (connection === 'close') {
                 session.ready = false;
@@ -614,6 +713,7 @@ async function requestSessionPairingCode(sessionId, phoneNumber) {
                     setTimeout(() => createOrRestoreSession(sessionId), 3000);
                 } else {
                     activeSessions.delete(sessionId);
+                    io.to(sessionId).emit('wa_status_update', { ready: false, error: 'Session ended' });
                     await clearSessionFromDB(sessionId);
                 }
             }
@@ -768,14 +868,6 @@ function cleanupFiles(files) {
     }
 }
 
-// Cleanup stale uploads on startup
-try {
-    const uploadsDir = path.join(__dirname, 'uploads');
-    if (fs.existsSync(uploadsDir)) {
-        const stale = fs.readdirSync(uploadsDir);
-        if (stale.length > 0) { stale.forEach(f => fs.unlinkSync(path.join(uploadsDir, f))); log('INFO', `Cleaned ${stale.length} stale upload(s)`); }
-    }
-} catch (e) {}
 
 // ==============================
 // API ROUTES
@@ -859,7 +951,7 @@ app.post('/api/whatsapp/pairing-code', async (req, res) => {
     }
     res.json({ pairingCode: result.pairingCode });
 });
-app.delete('/api/jobs/:id', (req, res) => {
+app.delete('/api/jobs/:id', async (req, res) => {
     const jobId = req.params.id;
     const index = scheduledJobs.findIndex(j => j.id === jobId);
     if (index === -1) {
@@ -867,6 +959,7 @@ app.delete('/api/jobs/:id', (req, res) => {
     }
     clearTimeout(scheduledJobs[index].timer);
     scheduledJobs.splice(index, 1);
+    await removeJob(jobId);
     res.json({ success: true, message: 'Job canceled successfully' });
 });
 
@@ -1196,21 +1289,30 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
             }
 
             if (scheduledTime) {
-                const scheduleTelegramJob = (delayMs, currentScheduledTime, jobId) => {
+                const scheduleTelegramJob = async (delayMs, currentScheduledTime, jobId) => {
                     if (delayMs < 0) return;
                     if (!jobId) jobId = Date.now().toString(36);
+                    
+                    const jobData = {
+                        id: jobId, channel: 'telegram', targets: resolved.map(r => r.label), resolvedTargets: resolved,
+                        files, textMessage, selfDestruct, scheduledFor: new Date(currentScheduledTime).toISOString(), cyclePeriod
+                    };
+                    await persistJob(jobData);
+
                     scheduledJobs.push({
-                        id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
+                        id: jobId, targets: jobData.targets, fileCount: files.length, scheduledFor: jobData.scheduledFor,
                         timer: setTimeout(async () => {
                             for (const t of resolved) await sendTelegram(t.chatId, textMessage, files, selfDestruct);
                             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
+                            
                             if (cyclePeriod !== 'none') {
                                 const nextDate = new Date();
                                 if (cyclePeriod === 'daily') nextDate.setDate(nextDate.getDate() + 1);
                                 else if (cyclePeriod === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
                                 else if (cyclePeriod === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
-                                scheduleTelegramJob(nextDate.getTime() - Date.now(), nextDate);
+                                await scheduleTelegramJob(nextDate.getTime() - Date.now(), nextDate, jobId);
                             } else {
+                                await removeJob(jobId);
                                 cleanupFiles(files);
                             }
                         }, delayMs)
@@ -1363,8 +1465,10 @@ async function startServer() {
     await connectDB();
     await loadUserMap();
     setupVapid();
+    await restoreScheduledJobs();
+    await cleanupStaleUploads();
 
-    app.listen(port, () => {
+    server.listen(port, () => {
         log('INFO', `Bridge Server running at http://localhost:${port}`);
         log('INFO', `MongoDB: ${db ? 'connected' : 'file-fallback'} | Telegram: ${telegramBot ? 'active' : 'disabled'} | WA: open (QR auth)`);
     });
