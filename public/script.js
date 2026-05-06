@@ -1,3 +1,5 @@
+const socket = typeof io !== 'undefined' ? io() : { emit: ()=>{}, on: ()=>{} };
+
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const chatIdInput = document.getElementById('chatId');
@@ -448,8 +450,12 @@ btnEmail.addEventListener('click', () => setChannel('email'));
 // ==============================
 // WHATSAPP QR
 // ==============================
-function startWaPolling() { stopWaPolling(); checkWaStatus(); waPollingInterval = setInterval(checkWaStatus, 3000); }
-function stopWaPolling() { if (waPollingInterval) { clearInterval(waPollingInterval); waPollingInterval = null; } }
+function startWaPolling() { 
+    const sid = localStorage.getItem('bridge_wa_session_phone') || '';
+    if (sid) socket.emit('join_wa_session', sid);
+    checkWaStatus(); 
+}
+function stopWaPolling() { }
 let waWasConnected = false;
 
 const topToast = document.getElementById('top-toast');
@@ -464,6 +470,28 @@ function showTopToast(text, type = 'success', duration = 4000) {
     }, duration);
 }
 
+socket.on('wa_status_update', (data) => {
+    if (data.ready) {
+        waQrOverlay.classList.add('hidden');
+        if (!waWasConnected) {
+            waWasConnected = true;
+            showTopToast('✅ WhatsApp connected — ready to send!');
+        }
+    } else {
+        waWasConnected = false;
+        waQrOverlay.classList.remove('hidden');
+        if (data.qr) { waQrImage.src = data.qr; waQrImage.classList.remove('hidden'); waQrLoading.classList.add('hidden'); }
+        else { waQrImage.classList.add('hidden'); waQrLoading.classList.remove('hidden'); }
+    }
+});
+
+socket.on('admin_dashboard_update', () => {
+    const adminContent = document.getElementById('admin-content');
+    if (adminContent && !adminContent.classList.contains('hidden')) {
+        loadAdminData();
+    }
+});
+
 async function checkWaStatus() {
     try {
         const sid = localStorage.getItem('bridge_wa_session_phone') || '';
@@ -471,7 +499,6 @@ async function checkWaStatus() {
         const data = await res.json();
         if (data.ready) {
             waQrOverlay.classList.add('hidden');
-            stopWaPolling();
             if (!waWasConnected) {
                 waWasConnected = true;
                 showTopToast('✅ WhatsApp connected — ready to send!');
@@ -1100,7 +1127,6 @@ function showAdminContent() {
     adminContent.classList.remove('hidden');
     loadAdminData();
     if (adminInterval) clearInterval(adminInterval);
-    adminInterval = setInterval(loadAdminData, 10000); // refresh every 10s
 }
 
 async function fetchAdminData(endpoint) {
@@ -1478,6 +1504,7 @@ async function initPush() {
 }
 
 // Enhanced Preview
+// Enhanced Preview
 function openPreview(index) {
     currentPreviewIndex = index;
     const file = selectedFiles[index];
@@ -1487,28 +1514,34 @@ function openPreview(index) {
     previewContent.innerHTML = '<div class="wa-qr-loading">Loading...</div>';
     previewInfo.innerText = `${file.name} (${formatSize(file.size)}) - ${index + 1}/${selectedFiles.length}`;
 
-    const reader = new FileReader();
-    if (file.type.startsWith('image/')) {
-        reader.onload = (e) => {
-            previewContent.innerHTML = `<img src="${e.target.result}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+    const url = URL.createObjectURL(file);
+    previewContent.dataset.url = url; // Store for revocation
+    const type = file.type;
+    const name = file.name.toLowerCase();
+
+    if (type.startsWith('image/')) {
+        previewContent.innerHTML = `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+    } else if (type.startsWith('video/')) {
+        previewContent.innerHTML = `<video src="${url}" controls autoplay style="max-width:100%; max-height:100%;"></video>`;
+    } else if (type.startsWith('audio/')) {
+        previewContent.innerHTML = `<audio src="${url}" controls autoplay style="width: 100%;"></audio>`;
+    } else if (type === 'application/pdf' || name.endsWith('.pdf')) {
+        previewContent.innerHTML = `<object data="${url}" type="application/pdf" style="width:100%; height:80vh; border:none; background:white;">
+            <p>Unable to display PDF. <a href="${url}" target="_blank">Download instead</a></p>
+        </object>`;
+    } else if (name.endsWith('.docx')) {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const result = await mammoth.convertToHtml({ arrayBuffer: e.target.result });
+                previewContent.innerHTML = `<div style="background:white; color:black; padding:40px; text-align:left; height:80vh; overflow-y:auto; font-family: 'Times New Roman', serif;">${result.value}</div>`;
+            } catch (err) {
+                previewContent.innerHTML = `<div class="status error">Failed to preview DOCX: ${err.message}</div>`;
+            }
         };
-        reader.readAsDataURL(file);
-    } else if (file.type.startsWith('video/')) {
-        reader.onload = (e) => {
-            previewContent.innerHTML = `<video src="${e.target.result}" controls autoplay style="max-width:100%; max-height:100%;"></video>`;
-        };
-        reader.readAsDataURL(file);
-    } else if (file.type.startsWith('audio/')) {
-        reader.onload = (e) => {
-            previewContent.innerHTML = `<audio src="${e.target.result}" controls autoplay style="width: 100%;"></audio>`;
-        };
-        reader.readAsDataURL(file);
-    } else if (file.type === 'application/pdf') {
-        reader.onload = (e) => {
-            previewContent.innerHTML = `<iframe src="${e.target.result}" style="width:100%; height:80vh; border:none; background:white;"></iframe>`;
-        };
-        reader.readAsDataURL(file);
+        reader.readAsArrayBuffer(file);
     } else {
+        const reader = new FileReader();
         reader.onload = (e) => {
             const text = e.target.result;
             const safeText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1518,6 +1551,17 @@ function openPreview(index) {
         reader.readAsText(file.slice(0, 50000)); // First 50KB
     }
 }
+
+// Ensure object URLs are revoked to prevent memory leaks
+function closePreview() {
+    if (previewContent.dataset.url) {
+        URL.revokeObjectURL(previewContent.dataset.url);
+        delete previewContent.dataset.url;
+    }
+    previewModal.classList.add('hidden');
+    previewContent.innerHTML = '';
+}
+previewModalClose.addEventListener('click', closePreview);
 
 previewPrev.addEventListener('click', (e) => {
     e.stopPropagation();
