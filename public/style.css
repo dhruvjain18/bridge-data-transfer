@@ -415,9 +415,15 @@ header p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
 .wa-qr-overlay.hidden { display: none; }
 .wa-qr-overlay p { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
 .wa-qr-overlay .wa-qr-hint { font-size: 11px; margin-top: 16px; margin-bottom: 0; color: var(--text-muted); }
-.qr-box { width: 220px; height: 220px; margin: 0 auto; background: white; border-radius: 14px; display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+.qr-box { width: 220px; height: 220px; margin: 0 auto; background: white; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 .qr-box img { width: 100%; height: auto; }
-#wa-qr-loading { color: #333; font-size: 13px; font-weight: 600; }
+#wa-qr-loading { color: #555; font-size: 13px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+#wa-qr-loading::before {
+    content: ''; display: block; width: 28px; height: 28px;
+    border: 3px solid rgba(0,0,0,0.1); border-top-color: var(--whatsapp);
+    border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Inputs */
 .input-group { margin-bottom: 18px; }
@@ -429,6 +435,25 @@ header p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
 .optional { color: var(--text-muted); font-size: 13px; font-weight: normal; }
 
 
+
+/* Autocomplete Dropdown */
+.autocomplete-wrapper { position: relative; width: 100%; display: flex; flex: 1; flex-direction: column; }
+.autocomplete-wrapper input { width: 100% !important; }
+.autocomplete-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60;
+    max-height: 200px; overflow-y: auto; background: var(--bg-color);
+    border: 1px solid var(--border-color); border-radius: 12px;
+    box-shadow: 0 12px 40px var(--shadow); list-style: none;
+    animation: fadeIn 0.2s; padding: 6px;
+}
+.autocomplete-dropdown.hidden { display: none; }
+.autocomplete-item {
+    padding: 10px 14px; cursor: pointer; font-size: 13px; color: var(--text-primary);
+    font-family: 'Inter', sans-serif; border-radius: 8px; transition: background 0.1s;
+    display: flex; align-items: center; gap: 8px;
+}
+.autocomplete-item:hover { background: var(--surface-hover); }
+.autocomplete-item strong { color: var(--accent); }
 
 /* Extra Options in Advanced Settings */
 
