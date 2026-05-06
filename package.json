@@ -17,6 +17,7 @@
     "nodemailer": "^8.0.7",
     "pino": "^9.6.0",
     "qrcode": "^1.5.3",
+    "socket.io": "^4.8.3",
     "speakeasy": "^2.0.0",
     "web-push": "^3.6.7"
   }
