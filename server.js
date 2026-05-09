@@ -389,7 +389,7 @@ if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
 
     telegramBot.on('error', (error) => log('ERROR', `Telegram bot error: ${error.message}`));
     telegramBot.getMe().then(info => log('INFO', `Telegram Bot connected: @${info.username}`))
-        .catch(err => { log('ERROR', `Telegram Bot invalid: ${err.message}`); telegramBot = null; });
+        .catch(err => log('ERROR', `Telegram Bot connection check failed: ${err.message} (Bot still active)`));
 
     telegramBot.onText(/\/start/, async (msg) => {
         const chatId = msg.chat.id;
