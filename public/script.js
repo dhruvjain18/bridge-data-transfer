@@ -918,7 +918,7 @@ async function handleSend() {
         for (const f of filesToSend) {
             sendBtnText.textContent = t('status_encrypting', { name: f.name });
             const encryptedBlob = await encryptFileChunked(aesKey, f);
-            const encFile = new File([encryptedBlob], f.name, { type: 'application/octet-stream' });
+            const encFile = new File([encryptedBlob], f.name, { type: f.type || 'application/octet-stream' });
             formData.append('files', encFile);
         }
     } catch (e) {
@@ -972,7 +972,7 @@ async function handleSend() {
                 playWhoosh();
                 showStatus(`${result.message} 🚀`, 'success');
                 const displayTarget = activeChannel === 'whatsapp' ? `${selectedCountry.code} ${waPhoneInput.value}` : target;
-                saveContact(activeChannel, target);
+                saveContact(activeChannel, activeChannel === 'whatsapp' ? waPhoneInput.value : target);
                 addHistoryEntry({
                     to: displayTarget,
                     files: filesToSend.map(f => f.name),
