@@ -134,6 +134,21 @@ const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RECIPIENTS = 5;
 function sanitizeInput(str) { return str ? String(str).replace(/[<>]/g, '').trim() : ''; }
 
+function getMimeType(filename, providedMime) {
+    if (providedMime && providedMime !== 'application/octet-stream') return providedMime;
+    const ext = path.extname(filename).toLowerCase();
+    const map = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+        '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
+        '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+        '.pdf': 'application/pdf', '.zip': 'application/zip', '.rar': 'application/x-rar-compressed',
+        '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.txt': 'text/plain', '.csv': 'text/csv', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json'
+    };
+    return map[ext] || 'application/octet-stream';
+}
+
 // ==============================
 // MONGODB
 // ==============================
@@ -412,12 +427,12 @@ if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
 // NODEMAILER (Email functionality)
 // ==============================
 const smtpConfig = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: parseInt(process.env.SMTP_PORT) === 465,
+    host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
+    port: parseInt((process.env.SMTP_PORT || '587').trim()),
+    secure: parseInt((process.env.SMTP_PORT || '587').trim()) === 465,
     auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
+        user: (process.env.SMTP_USER || '').trim(),
+        pass: (process.env.SMTP_PASS || '').trim()
     },
     connectionTimeout: 10000,
     greetingTimeout: 10000,
@@ -768,14 +783,23 @@ async function sendTelegram(chatId, text, files, selfDestruct = false) {
     }
     for (const file of files) {
         try {
+            const filePath = path.resolve(file.path);
+            const mime = getMimeType(file.originalname, file.mimetype);
             const caption = selfDestruct ? `🔥 Self-destruct: ${file.originalname}` : file.originalname;
-            await telegramBot.sendDocument(chatId, path.resolve(file.path), { 
-                caption: caption,
-                protect_content: selfDestruct
-            }, {
-                filename: file.originalname, 
-                contentType: file.mimetype || 'application/octet-stream'
-            });
+            const options = { caption, protect_content: selfDestruct, parse_mode: 'Markdown' };
+
+            if (mime.startsWith('image/') && !file.originalname.toLowerCase().endsWith('.gif')) {
+                await telegramBot.sendPhoto(chatId, filePath, options);
+            } else if (mime.startsWith('video/')) {
+                await telegramBot.sendVideo(chatId, filePath, options);
+            } else if (mime.startsWith('audio/')) {
+                await telegramBot.sendAudio(chatId, filePath, options);
+            } else {
+                await telegramBot.sendDocument(chatId, filePath, options, { 
+                    filename: file.originalname, 
+                    contentType: mime 
+                });
+            }
             results.filesSent++;
         } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
     }
@@ -792,7 +816,7 @@ async function sendEmail(emailTo, text, files, senderName) {
     
     try {
         await transporter.sendMail({
-            from: `"${displayName}" <${smtpConfig.auth.user}>`,
+            from: `"${displayName}" <${smtpConfig.auth.user}>`, 
             to: emailTo,
             replyTo: smtpConfig.auth.user,
             subject: `${senderName ? senderName + ' sent you' : 'You received'} a secure transfer via Bridge`,
@@ -842,7 +866,7 @@ async function sendWhatsApp(sessionId, chatId, text, files, selfDestruct = false
     for (const file of files) {
         try {
             const buffer = fs.readFileSync(path.resolve(file.path));
-            const mime = file.mimetype || 'application/octet-stream';
+            const mime = getMimeType(file.originalname, file.mimetype);
             const caption = selfDestruct ? `🔥 Self-destruct: ${file.originalname}` : file.originalname;
             const common = { caption, mimetype: mime, viewOnce: selfDestruct };
 
