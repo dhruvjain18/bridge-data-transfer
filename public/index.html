@@ -40,6 +40,9 @@
     </div>
     <button class="theme-toggle" id="theme-toggle" title="Toggle theme"><span class="theme-icon" id="theme-icon">🌙</span></button>
     <button class="help-fab" id="help-fab" title="Help & FAQ" data-i18n-title="help_title"><span class="help-fab-icon" id="help-fab-icon">?</span></button>
+    <button class="contacts-fab" id="contacts-fab" title="Contacts" data-i18n-title="contacts_title">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><circle cx="12" cy="10" r="2.5"/><path d="M15.5 15.5c0-1.5-1.5-2.5-3.5-2.5s-3.5 1-3.5 2.5"/></svg>
+    </button>
     <button class="history-fab" id="history-fab" title="Transfer History" data-i18n-title="history_title">🕘</button>
 
     <!-- Top Toast Notification -->
@@ -164,6 +167,33 @@
         <div class="history-body" id="history-body"><p class="history-empty" data-i18n="history_empty">No transfers yet.</p></div>
     </div>
 
+    <!-- Contacts Panel -->
+    <div class="contacts-panel hidden" id="contacts-panel">
+        <div class="contacts-header">
+            <h3 data-i18n="contacts_title">📇 Contacts</h3>
+            <div class="contacts-actions">
+                <button class="contacts-import" id="contacts-import" title="Import from history">📥 Import</button>
+                <button class="contacts-close" id="contacts-close">✕</button>
+            </div>
+        </div>
+        <div class="contacts-add">
+            <input type="text" id="contact-name" placeholder="Contact name" autocomplete="off">
+            <input type="text" id="contact-value" placeholder="Phone / @username / email" autocomplete="off">
+            <select id="contact-channel">
+                <option value="whatsapp">💬 WhatsApp</option>
+                <option value="telegram">📱 Telegram</option>
+                <option value="email">📧 Email</option>
+            </select>
+            <button id="contacts-add-btn">+ Add</button>
+        </div>
+        <div class="contacts-search">
+            <input type="text" id="contacts-search-input" placeholder="🔍 Search contacts..." autocomplete="off">
+        </div>
+        <div class="contacts-body" id="contacts-body">
+            <p class="contacts-empty">No contacts saved yet.</p>
+        </div>
+    </div>
+
     <!-- Main App -->
     <div class="page-wrapper">
         <div class="container">
@@ -190,44 +220,66 @@
                 <button class="channel-btn" id="btn-email" data-channel="email" data-i18n="channel_email">📧 Email</button>
             </div>
 
-            <!-- WhatsApp QR Overlay -->
-            <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
-                <p data-i18n="wa_qr_prompt">Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
-                <div class="qr-box" id="wa-qr-box">
-                    <img id="wa-qr-image" src="" alt="QR" class="hidden">
-                    <div id="wa-qr-loading" data-i18n="wa_qr_loading">Creating your session...</div>
-                </div>
-                <p class="wa-qr-hint" data-i18n="wa_qr_hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
-                <div class="wa-pairing-toggle">
-                    <button id="wa-pairing-link" class="wa-pairing-btn" data-i18n="wa_pairing_btn">📱 Can't scan? Use pairing code</button>
-                </div>
-                <div class="wa-pairing-section hidden" id="wa-pairing-section">
-                    <p class="wa-pairing-info" data-i18n="wa_pairing_info">Enter your phone number with country code to get a pairing code</p>
-                    <div class="wa-pairing-input-row">
-                        <input type="text" id="wa-pairing-phone" placeholder="e.g. 919876543210" autocomplete="off">
-                        <button id="wa-pairing-submit" data-i18n="wa_pairing_get_code">Get Code</button>
-                    </div>
-                    <div class="wa-pairing-code hidden" id="wa-pairing-code">
-                        <p class="wa-pairing-label">Your pairing code:</p>
-                        <div class="wa-pairing-digits" id="wa-pairing-digits"></div>
-                        <p class="wa-pairing-help">Open WhatsApp → Linked Devices → Link a Device → <b>Link with phone number instead</b> → Enter this code</p>
-                    </div>
-                    <div class="wa-pairing-error hidden" id="wa-pairing-error"></div>
-                </div>
-            </div>
-
             <main id="main-content">
                 <!-- Telegram input -->
                 <div class="input-group" id="telegram-input">
-                    <label for="chatId" data-i18n="label_telegram_username">Telegram Username</label>
-                    <div class="autocomplete-wrapper">
-                        <input type="text" id="chatId" placeholder="@username or @user1, @user2" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
-                        <ul class="autocomplete-dropdown hidden" id="chatId-autocomplete"></ul>
+                    <!-- Telegram QR Overlay (shown when QR mode active) -->
+                    <div class="tg-qr-overlay hidden" id="tg-qr-overlay">
+                        <p>Open <b>your Telegram</b> → Settings → Devices → Link Desktop Device</p>
+                        <div class="qr-box" id="tg-qr-box">
+                            <img id="tg-qr-image" src="" alt="QR" class="hidden">
+                            <div id="tg-qr-loading">Creating your session...</div>
+                        </div>
+                        <p class="wa-qr-hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
+                        <div class="tg-qr-error hidden" id="tg-qr-error"></div>
+                    </div>
+                    <div class="tg-mode-toggle" id="tg-mode-toggle">
+                        <button class="tg-mode-btn active" id="tg-mode-qr" data-mode="qr">📷 Scan QR</button>
+                        <button class="tg-mode-btn" id="tg-mode-bot" data-mode="bot">🤖 Use Bot</button>
+                    </div>
+                    <div id="tg-bot-input">
+                        <label for="chatId" data-i18n="label_telegram_username">Telegram Username</label>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="chatId" placeholder="Type a name or @username" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
+                            <ul class="autocomplete-dropdown hidden" id="chatId-autocomplete"></ul>
+                        </div>
+                    </div>
+                    <div id="tg-qr-input" class="hidden">
+                        <label>Recipient (username, phone, or name)</label>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="tgRecipient" placeholder="Type a name, @username, or phone" autocomplete="off">
+                            <ul class="autocomplete-dropdown hidden" id="tgRecipient-autocomplete"></ul>
+                        </div>
                     </div>
                 </div>
 
                 <!-- WhatsApp input -->
                 <div class="input-group hidden" id="whatsapp-input">
+                    <!-- WhatsApp QR Overlay (inside whatsapp-input so it only shows on WA tab) -->
+                    <div class="wa-qr-overlay hidden" id="wa-qr-overlay">
+                        <p data-i18n="wa_qr_prompt">Open <b>your WhatsApp</b> → Settings → Linked Devices → Link</p>
+                        <div class="qr-box" id="wa-qr-box">
+                            <img id="wa-qr-image" src="" alt="QR" class="hidden">
+                            <div id="wa-qr-loading" data-i18n="wa_qr_loading">Creating your session...</div>
+                        </div>
+                        <p class="wa-qr-hint" data-i18n="wa_qr_hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
+                        <div class="wa-pairing-toggle">
+                            <button id="wa-pairing-link" class="wa-pairing-btn" data-i18n="wa_pairing_btn">📱 Can't scan? Use pairing code</button>
+                        </div>
+                        <div class="wa-pairing-section hidden" id="wa-pairing-section">
+                            <p class="wa-pairing-info" data-i18n="wa_pairing_info">Enter your phone number with country code to get a pairing code</p>
+                            <div class="wa-pairing-input-row">
+                                <input type="text" id="wa-pairing-phone" placeholder="e.g. 919876543210" autocomplete="off">
+                                <button id="wa-pairing-submit" data-i18n="wa_pairing_get_code">Get Code</button>
+                            </div>
+                            <div class="wa-pairing-code hidden" id="wa-pairing-code">
+                                <p class="wa-pairing-label">Your pairing code:</p>
+                                <div class="wa-pairing-digits" id="wa-pairing-digits"></div>
+                                <p class="wa-pairing-help">Open WhatsApp → Linked Devices → Link a Device → <b>Link with phone number instead</b> → Enter this code</p>
+                            </div>
+                            <div class="wa-pairing-error hidden" id="wa-pairing-error"></div>
+                        </div>
+                    </div>
                     <label for="waPhone"><span data-i18n="label_recipient_phone">Recipient Phone Number(s)</span> <span class="optional" data-i18n="label_comma_separated">(comma separated)</span></label>
                     <div class="phone-input-wrapper">
                         <div class="country-selector" id="country-selector">
