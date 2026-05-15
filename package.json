@@ -19,6 +19,7 @@
     "qrcode": "^1.5.3",
     "socket.io": "^4.8.3",
     "speakeasy": "^2.0.0",
+    "telegram": "^2.26.22",
     "web-push": "^3.6.7"
   }
 }
