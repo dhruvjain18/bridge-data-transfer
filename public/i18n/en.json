@@ -103,5 +103,7 @@
   "wa_pairing_qr_btn": "📷 Show QR code instead",
   "wa_pairing_info": "Enter your phone number with country code to get a pairing code",
   "wa_pairing_get_code": "Get Code",
-  "btn_zip_selected": "🤐 Zip Selected Files"
+  "btn_zip_selected": "🤐 Zip Selected Files",
+  "contacts_title": "📇 Contacts",
+  "placeholder_telegram": "Type a name or @username"
 }
