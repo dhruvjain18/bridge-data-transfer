@@ -16,6 +16,12 @@ const crypto = require('crypto');
 const speakeasy = require('speakeasy');
 const webpush = require('web-push');
 
+// GramJS (Telegram MTProto Client) for QR-based login
+const { TelegramClient, Api } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+const TG_API_ID = parseInt(process.env.TELEGRAM_API_ID || '0');
+const TG_API_HASH = (process.env.TELEGRAM_API_HASH || '').trim();
+
 // Generate RSA Keypair for Client-to-Server Encryption
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -36,6 +42,9 @@ app.set('trust proxy', 1);
 io.on('connection', (socket) => {
     socket.on('join_wa_session', (sessionId) => {
         if (sessionId) socket.join(sessionId);
+    });
+    socket.on('join_tg_session', (sessionId) => {
+        if (sessionId) socket.join('tg_' + sessionId);
     });
 });
 
@@ -117,7 +126,7 @@ app.use('/api/', (req, res, next) => {
 
 const upload = multer({
     dest: 'uploads/',
-    limits: { fileSize: 100 * 1024 * 1024 },
+    limits: { fileSize: 2000 * 1024 * 1024 }, // 2 GB limit (up from 100MB) to support TG client mode
     fileFilter: (req, file, cb) => {
         const blocked = /\.(exe|bat|cmd|sh|ps1|vbs|js|msi|scr|com|pif|hta|cpl|inf|reg)$/i;
         if (blocked.test(file.originalname)) {
@@ -265,7 +274,7 @@ async function loadUserMap() {
         try {
             const docs = await db.collection('telegram_users').find({}).toArray();
             userMap = {};
-            for (const doc of docs) userMap[doc.username] = doc.chatId;
+            for (const doc of docs) userMap[doc.username] = { chatId: doc.chatId, firstName: doc.firstName || '' };
             if (Object.keys(userMap).length > 0) {
                 log('INFO', `Telegram users from DB: ${Object.keys(userMap).length}`);
                 return;
@@ -275,11 +284,15 @@ async function loadUserMap() {
     // File fallback
     if (fs.existsSync(USER_MAP_FILE)) {
         try {
-            userMap = JSON.parse(fs.readFileSync(USER_MAP_FILE, 'utf-8'));
+            const raw = JSON.parse(fs.readFileSync(USER_MAP_FILE, 'utf-8'));
+            userMap = {};
+            for (const [u, v] of Object.entries(raw)) {
+                userMap[u] = typeof v === 'object' ? v : { chatId: v, firstName: '' };
+            }
             log('INFO', `Telegram users from file: ${Object.keys(userMap).length}`);
             if (db && Object.keys(userMap).length > 0) {
-                for (const [u, c] of Object.entries(userMap)) {
-                    await db.collection('telegram_users').updateOne({ username: u }, { $set: { username: u, chatId: c } }, { upsert: true });
+                for (const [u, data] of Object.entries(userMap)) {
+                    await db.collection('telegram_users').updateOne({ username: u }, { $set: { username: u, chatId: data.chatId, firstName: data.firstName, updatedAt: new Date() } }, { upsert: true });
                 }
                 log('INFO', 'Migrated Telegram users to MongoDB');
             }
@@ -287,14 +300,16 @@ async function loadUserMap() {
     }
 }
 
-async function saveUserMapping(username, chatId) {
-    userMap[username] = chatId;
+async function saveUserMapping(username, chatId, firstName = '') {
+    userMap[username] = { chatId, firstName };
     if (db) {
         await db.collection('telegram_users').updateOne(
-            { username }, { $set: { username, chatId, updatedAt: new Date() } }, { upsert: true }
+            { username }, { $set: { username, chatId, firstName, updatedAt: new Date() } }, { upsert: true }
         );
     } else {
-        fs.writeFileSync(USER_MAP_FILE, JSON.stringify(userMap, null, 2));
+        const flat = {};
+        for (const [u, v] of Object.entries(userMap)) flat[u] = v;
+        fs.writeFileSync(USER_MAP_FILE, JSON.stringify(flat, null, 2));
     }
 }
 
@@ -411,8 +426,8 @@ if (telegramToken && telegramToken !== 'YOUR_BOT_TOKEN_HERE') {
         const username = msg.from.username;
         const firstName = msg.from.first_name || 'there';
         if (username) {
-            await saveUserMapping(username.toLowerCase(), chatId);
-            log('INFO', `Registered Telegram user @${username} → ${chatId}`);
+            await saveUserMapping(username.toLowerCase(), chatId, firstName);
+            log('INFO', `Registered Telegram user @${username} (${firstName}) → ${chatId}`);
         }
         telegramBot.sendMessage(chatId,
             `👋 Hey ${firstName}!\n✅ Registered with Bridge.\nChat ID: \`${chatId}\`${username ? `\nUsername: @${username}` : ''}`,
@@ -747,12 +762,342 @@ setInterval(() => {
     const now = Date.now();
     for (const [id, session] of activeSessions) {
         if (now - session.lastActivity > SESSION_IDLE_TIMEOUT) {
-            log('INFO', `Disconnecting idle session: ${id}`);
+            log('INFO', `Disconnecting idle WA session: ${id}`);
             try { session.socket?.end(); } catch (e) {}
             activeSessions.delete(id);
         }
     }
+    // Also clean idle Telegram sessions
+    for (const [id, session] of tgActiveSessions) {
+        if (now - session.lastActivity > SESSION_IDLE_TIMEOUT) {
+            log('INFO', `Disconnecting idle TG session: ${id}`);
+            try { if (session._authPoller) clearInterval(session._authPoller); } catch (e) {}
+            try { if (session._qrTimer) clearTimeout(session._qrTimer); } catch (e) {}
+            try { session.client?.disconnect(); } catch (e) {}
+            tgActiveSessions.delete(id);
+        }
+    }
 }, 5 * 60 * 1000);
+
+// ==============================
+// TELEGRAM GRAMJS: Per-User MTProto Session Manager
+// ==============================
+const tgActiveSessions = new Map();
+const MAX_TG_SESSIONS = 10;
+const tgSessionRetries = new Map();
+
+async function loadTgSessionString(sessionId) {
+    if (!db) return '';
+    try {
+        const doc = await db.collection('tg_sessions').findOne({ sessionId });
+        return doc ? doc.sessionString : '';
+    } catch (e) {
+        log('ERROR', `Failed to load TG session: ${e.message}`);
+        return '';
+    }
+}
+
+async function saveTgSessionString(sessionId, sessionString) {
+    if (!db) return;
+    try {
+        await db.collection('tg_sessions').updateOne(
+            { sessionId },
+            { $set: { sessionId, sessionString, updatedAt: new Date() } },
+            { upsert: true }
+        );
+    } catch (e) {
+        log('ERROR', `Failed to save TG session: ${e.message}`);
+    }
+}
+
+async function clearTgSession(sessionId) {
+    if (!db) return;
+    await db.collection('tg_sessions').deleteOne({ sessionId });
+    log('INFO', `Cleared TG session for ${sessionId}`);
+}
+
+async function createOrRestoreTelegramSession(sessionId) {
+    let session = tgActiveSessions.get(sessionId);
+    
+    // Already active and connected
+    if (session && session.ready && session.client?.connected) {
+        session.lastActivity = Date.now();
+        return session;
+    }
+
+    if (!session) {
+        // Evict oldest if at capacity
+        if (tgActiveSessions.size >= MAX_TG_SESSIONS) {
+            let oldestKey = null, oldestTime = Infinity;
+            for (const [key, sess] of tgActiveSessions) {
+                if (sess.lastActivity < oldestTime) { oldestTime = sess.lastActivity; oldestKey = key; }
+            }
+            if (oldestKey) {
+                log('INFO', `Evicting idle TG session: ${oldestKey}`);
+                try { tgActiveSessions.get(oldestKey).client?.disconnect(); } catch (e) {}
+                tgActiveSessions.delete(oldestKey);
+            }
+        }
+        session = { client: null, qr: null, ready: false, lastActivity: Date.now(), connecting: true };
+        tgActiveSessions.set(sessionId, session);
+    }
+
+    if (!TG_API_ID || !TG_API_HASH) {
+        log('WARN', 'Telegram API ID/Hash not configured for MTProto');
+        tgActiveSessions.delete(sessionId);
+        return null;
+    }
+
+    session.connecting = true;
+    session.ready = false;
+    session.lastActivity = Date.now();
+
+    // Helper to finalize a successful login
+    const finalizeLogin = async (client, sessionId, session) => {
+        if (session.ready) return; // Already done
+        session.ready = true;
+        session.connecting = false;
+        session.qr = null;
+        if (session._qrTimer) clearTimeout(session._qrTimer);
+        if (session._authPoller) clearInterval(session._authPoller);
+
+        try {
+            const savedSession = client.session.save();
+            await saveTgSessionString(sessionId, savedSession);
+        } catch (e) { log('WARN', `Failed to save TG session: ${e.message}`); }
+
+        log('INFO', `Telegram connected for ${sessionId}`);
+        io.to('tg_' + sessionId).emit('tg_status_update', { ready: true });
+    };
+
+    try {
+        // Load stored session string from MongoDB
+        const storedSession = await loadTgSessionString(sessionId);
+        const stringSession = new StringSession(storedSession);
+
+        const client = new TelegramClient(stringSession, TG_API_ID, TG_API_HASH, {
+            connectionRetries: 5,
+            baseLogger: pino({ level: 'error' }),
+        });
+
+        session.client = client;
+
+        // Check if we already have a valid stored session
+        if (storedSession) {
+            try {
+                await client.connect();
+                if (await client.checkAuthorization()) {
+                    await finalizeLogin(client, sessionId, session);
+                    return session;
+                }
+            } catch (e) {
+                log('WARN', `Telegram stored session invalid for ${sessionId}: ${e.message}`);
+            }
+        }
+
+        // No valid session — start QR login flow
+        if (!client.connected) await client.connect();
+
+        // QR Token generation loop
+        const loginLoop = async () => {
+            if (session.ready) return; // Already connected
+            try {
+                // First: quick authorization check (catches scan between polls)
+                try {
+                    if (await client.checkAuthorization()) {
+                        await finalizeLogin(client, sessionId, session);
+                        return;
+                    }
+                } catch (e) { /* not authorized yet */ }
+
+                const result = await client.invoke(
+                    new Api.auth.ExportLoginToken({
+                        apiId: TG_API_ID,
+                        apiHash: TG_API_HASH,
+                        exceptIds: [],
+                    })
+                );
+
+                const resultName = result.className || result.constructor?.name || '';
+
+                if (resultName === 'auth.LoginTokenSuccess' || resultName === 'LoginTokenSuccess') {
+                    await finalizeLogin(client, sessionId, session);
+                } else if (resultName === 'auth.LoginTokenMigrateTo' || resultName === 'LoginTokenMigrateTo') {
+                    log('INFO', `Telegram QR migration needed for ${sessionId} → DC ${result.dcId}`);
+                    await client._switchDC(result.dcId);
+                    
+                    // After DC migration, try importing the token
+                    try {
+                        const imported = await client.invoke(
+                            new Api.auth.ImportLoginToken({ token: result.token })
+                        );
+                        const impName = imported.className || imported.constructor?.name || '';
+                        if (impName.includes('LoginTokenSuccess') || impName.includes('Authorization')) {
+                            await finalizeLogin(client, sessionId, session);
+                            return;
+                        }
+                    } catch (e) { /* import failed, will generate new QR */ }
+
+                    // Generate new QR after migration
+                    if (!session.ready) setTimeout(loginLoop, 500);
+                } else {
+                    // LoginToken — generate QR code
+                    const tokenBase64 = result.token.toString('base64url');
+                    const qrUrl = `tg://login?token=${tokenBase64}`;
+                    session.qr = await qrcode.toDataURL(qrUrl, { margin: 2, scale: 8 });
+                    session.connecting = false;
+                    log('INFO', `Telegram QR ready for ${sessionId}`);
+                    io.to('tg_' + sessionId).emit('tg_status_update', { ready: false, qr: session.qr });
+
+                    // Refresh QR in 20 seconds (token expires ~30s)
+                    session._qrTimer = setTimeout(loginLoop, 20000);
+                }
+            } catch (e) {
+                if (e.message?.includes('SESSION_PASSWORD_NEEDED')) {
+                    log('WARN', `Telegram 2FA required for ${sessionId}`);
+                    session.connecting = false;
+                    io.to('tg_' + sessionId).emit('tg_status_update', { ready: false, error: '2FA is enabled on this account. Please use the Bot method instead.' });
+                } else {
+                    log('ERROR', `Telegram QR login error for ${sessionId}: ${e.message}`);
+                    if (!session.ready) {
+                        session._qrTimer = setTimeout(loginLoop, 5000);
+                    }
+                }
+            }
+        };
+
+        // Listen for successful scan via event handler (backup)
+        client.addEventHandler(async (update) => {
+            const updateName = update.className || update.constructor?.name || '';
+            if (updateName === 'UpdateLoginToken' || updateName === 'updateLoginToken') {
+                log('INFO', `Telegram UpdateLoginToken received for ${sessionId}`);
+                try {
+                    if (await client.checkAuthorization()) {
+                        await finalizeLogin(client, sessionId, session);
+                        return;
+                    }
+                    // Try ExportLoginToken again
+                    const result = await client.invoke(
+                        new Api.auth.ExportLoginToken({
+                            apiId: TG_API_ID,
+                            apiHash: TG_API_HASH,
+                            exceptIds: [],
+                        })
+                    );
+                    const rName = result.className || result.constructor?.name || '';
+                    if (rName.includes('LoginTokenSuccess') || rName.includes('Authorization')) {
+                        await finalizeLogin(client, sessionId, session);
+                    }
+                } catch (e) {
+                    if (e.message?.includes('SESSION_PASSWORD_NEEDED')) {
+                        session.connecting = false;
+                        io.to('tg_' + sessionId).emit('tg_status_update', { ready: false, error: '2FA is enabled. Please use the Bot method.' });
+                    } else {
+                        log('ERROR', `Telegram login token update error: ${e.message}`);
+                    }
+                }
+            }
+        });
+
+        // Start the QR generation loop
+        loginLoop();
+
+        // Also poll checkAuthorization every 3 seconds as a safety net
+        session._authPoller = setInterval(async () => {
+            if (session.ready) { clearInterval(session._authPoller); return; }
+            try {
+                if (client.connected && await client.checkAuthorization()) {
+                    await finalizeLogin(client, sessionId, session);
+                }
+            } catch (e) { /* not authorized yet */ }
+        }, 3000);
+
+    } catch (e) {
+        log('ERROR', `Failed to create TG session for ${sessionId}: ${e.message}`);
+        tgActiveSessions.delete(sessionId);
+        return null;
+    }
+
+    return session;
+}
+
+async function getTelegramContacts(sessionId) {
+    const session = tgActiveSessions.get(sessionId);
+    if (!session || !session.ready || !session.client) return [];
+
+    try {
+        const result = await session.client.invoke(
+            new Api.contacts.GetContacts({ hash: BigInt(0) })
+        );
+        
+        if (!result.users) return [];
+        
+        return result.users.map(user => ({
+            name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Unknown',
+            value: user.username ? `@${user.username}` : (user.phone ? user.phone : String(user.id)),
+            phone: user.phone || '',
+            username: user.username || '',
+            channel: 'telegram'
+        })).filter(c => c.value);
+    } catch (e) {
+        log('ERROR', `Failed to fetch TG contacts: ${e.message}`);
+        return [];
+    }
+}
+
+async function sendTelegramClient(sessionId, target, text, files) {
+    const session = tgActiveSessions.get(sessionId);
+    if (!session || !session.ready || !session.client) {
+        return { textSent: false, filesSent: 0, errors: ['Telegram client not connected'] };
+    }
+
+    const results = { textSent: false, filesSent: 0, errors: [] };
+    session.lastActivity = Date.now();
+
+    try {
+        // Resolve target — could be @username, phone number, or user ID
+        let peer;
+        if (target.startsWith('@')) {
+            peer = target;
+        } else if (/^\d+$/.test(target)) {
+            // Could be a user ID or phone number — try resolving
+            try {
+                const resolved = await session.client.invoke(
+                    new Api.contacts.ResolvePhone({ phone: target })
+                );
+                peer = resolved.users[0];
+            } catch (e) {
+                // Try as user ID
+                peer = BigInt(target);
+            }
+        } else {
+            peer = target;
+        }
+
+        if (text) {
+            try {
+                await session.client.sendMessage(peer, { message: text });
+                results.textSent = true;
+            } catch (e) { results.errors.push(`Text: ${e.message}`); }
+        }
+
+        for (const file of files) {
+            try {
+                const filePath = path.resolve(file.path);
+                await session.client.sendFile(peer, {
+                    file: filePath,
+                    caption: file.originalname,
+                    forceDocument: true,
+                });
+                results.filesSent++;
+            } catch (e) { results.errors.push(`${file.originalname}: ${e.message}`); }
+        }
+    } catch (e) {
+        results.errors.push(`Send failed: ${e.message}`);
+    }
+
+    return results;
+}
 
 // ==============================
 // HELPERS
@@ -761,7 +1106,8 @@ function resolveTelegramTarget(target) {
     target = target.trim();
     if (/^\d+$/.test(target)) return target;
     const username = target.startsWith('@') ? target.slice(1).toLowerCase() : target.toLowerCase();
-    return userMap[username] || null;
+    const entry = userMap[username];
+    return entry ? (typeof entry === 'object' ? entry.chatId : entry) : null;
 }
 
 function formatWhatsAppNumber(phone) {
@@ -975,6 +1321,82 @@ app.post('/api/whatsapp/pairing-code', async (req, res) => {
     }
     res.json({ pairingCode: result.pairingCode });
 });
+
+// ==============================
+// TELEGRAM MTProto QR API ROUTES
+// ==============================
+
+// Init/restore Telegram QR session
+app.post('/api/telegram/verify', verifyLimiter, async (req, res) => {
+    const { sessionId } = req.body || {};
+    if (!sessionId || String(sessionId).length < 5) return res.json({ valid: false });
+
+    if (!TG_API_ID || !TG_API_HASH) {
+        return res.json({ valid: false, tgClientAvailable: false });
+    }
+
+    const sid = String(sessionId).trim();
+    log('INFO', 'Telegram MTProto session requested', { sessionId: sid, ip: req.ip });
+
+    if (db) {
+        const session = await createOrRestoreTelegramSession(sid);
+        if (!session) {
+            return res.json({ valid: true, tgClientAvailable: true, error: 'Could not initialize Telegram session.' });
+        }
+    }
+
+    return res.json({ valid: true, tgClientAvailable: true });
+});
+
+// Telegram MTProto session status
+app.get('/api/telegram/status', (req, res) => {
+    const sid = req.query.sessionId;
+    if (!sid) return res.json({ ready: false, qr: null });
+
+    const session = tgActiveSessions.get(sid);
+    if (!session) return res.json({ ready: false, qr: null });
+
+    session.lastActivity = Date.now();
+    res.json({
+        ready: session.ready,
+        qr: session.ready ? null : session.qr,
+        error: session.error || null,
+        tgClientAvailable: !!(TG_API_ID && TG_API_HASH)
+    });
+});
+
+// Fetch Telegram contacts (from MTProto client session)
+app.get('/api/telegram/contacts', async (req, res) => {
+    const sid = req.query.sessionId;
+    if (!sid) return res.json({ contacts: [] });
+
+    const contacts = await getTelegramContacts(sid);
+    res.json({ contacts });
+});
+
+// Check if Telegram MTProto client is available
+app.get('/api/telegram/config', (req, res) => {
+    res.json({ tgClientAvailable: !!(TG_API_ID && TG_API_HASH) });
+});
+
+// Clear Telegram MTProto session (logout)
+app.post('/api/telegram/logout', async (req, res) => {
+    const { sessionId } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: 'Session ID required' });
+
+    const session = tgActiveSessions.get(sessionId);
+    if (session && session.client) {
+        try {
+            if (session._qrTimer) clearTimeout(session._qrTimer);
+            await session.client.invoke(new Api.auth.LogOut());
+            session.client.disconnect();
+        } catch (e) { log('WARN', `TG logout error: ${e.message}`); }
+    }
+    tgActiveSessions.delete(sessionId);
+    await clearTgSession(sessionId);
+    res.json({ success: true });
+});
+
 app.delete('/api/jobs/:id', async (req, res) => {
     const jobId = req.params.id;
     const index = scheduledJobs.findIndex(j => j.id === jobId);
@@ -988,8 +1410,31 @@ app.delete('/api/jobs/:id', async (req, res) => {
 });
 
 app.get('/api/users', (req, res) => {
-    const users = Object.entries(userMap).map(([u, c]) => ({ username: `@${u}`, chatId: c }));
+    const users = Object.entries(userMap).map(([u, data]) => {
+        const d = typeof data === 'object' ? data : { chatId: data, firstName: '' };
+        return { username: `@${u}`, chatId: d.chatId, firstName: d.firstName || '' };
+    });
     res.json(users);
+});
+
+// Search registered Telegram users by name or username (for contacts autocomplete)
+app.get('/api/contacts/search', (req, res) => {
+    const q = (req.query.q || '').toLowerCase().trim();
+    const channel = req.query.channel || 'telegram';
+    if (!q || q.length < 1) return res.json([]);
+    
+    if (channel === 'telegram') {
+        const results = [];
+        for (const [username, data] of Object.entries(userMap)) {
+            const d = typeof data === 'object' ? data : { chatId: data, firstName: '' };
+            const name = (d.firstName || '').toLowerCase();
+            if (username.includes(q) || name.includes(q)) {
+                results.push({ name: d.firstName || username, value: `@${username}`, channel: 'telegram' });
+            }
+        }
+        return res.json(results.slice(0, 10));
+    }
+    res.json([]);
 });
 
 app.get('/api/scheduled', (req, res) => {
@@ -1151,7 +1596,10 @@ app.get('/api/admin/dashboard', adminAuth, async (req, res) => {
 });
 
 app.get('/api/admin/telegram-users', adminAuth, (req, res) => {
-    const users = Object.entries(userMap).map(([u, c]) => ({ username: `@${u}`, chatId: c }));
+    const users = Object.entries(userMap).map(([u, data]) => {
+        const d = typeof data === 'object' ? data : { chatId: data, firstName: '' };
+        return { username: `@${u}`, chatId: d.chatId, firstName: d.firstName || '' };
+    });
     res.json({ users });
 });
 
@@ -1299,8 +1747,42 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
         // ─── TELEGRAM ───
         if (channel === 'telegram') {
-            if (!telegramBot) { cleanupFiles(files); return res.status(503).json({ error: 'Telegram not configured.' }); }
+            const tgSessionId = req.body.tgSessionId || '';
+            const tgSession = tgSessionId ? tgActiveSessions.get(tgSessionId) : null;
+            const useTgClient = tgSession && tgSession.ready && tgSession.client;
 
+            if (!useTgClient && !telegramBot) { cleanupFiles(files); return res.status(503).json({ error: 'Telegram not configured.' }); }
+
+            if (useTgClient) {
+                // ─── TELEGRAM CLIENT (MTProto) MODE ───
+                log('INFO', 'Using Telegram client mode for send', { sessionId: tgSessionId });
+
+                if (scheduledTime) {
+                    // Scheduled sends still use bot for reliability (client may disconnect)
+                    if (!telegramBot) {
+                        cleanupFiles(files);
+                        return res.status(400).json({ error: 'Scheduled sends require the bot. Please /start the bot first.' });
+                    }
+                    // Fall through to bot-based scheduling below
+                } else {
+                    let totalSent = 0, allErrors = [];
+                    for (const t of targets) {
+                        const r = await sendTelegramClient(tgSessionId, t, textMessage, files);
+                        totalSent += r.filesSent;
+                        if (r.textSent) totalSent++;
+                        if (r.errors.length) { log('ERROR', `TG client errors for ${t}`, { errors: r.errors }); allErrors.push(...r.errors); }
+                    }
+                    cleanupFiles(files);
+                    logTransfer('telegram', targets.length, files.length, totalSizeBytes);
+                    
+                    if (totalSent === 0 && allErrors.length > 0) {
+                        return res.status(502).json({ error: `Telegram failed: ${allErrors[0]}` });
+                    }
+                    return res.json({ success: true, message: `${totalSent} item(s) sent to ${targets.length} recipient(s) via Telegram!` });
+                }
+            }
+
+            // ─── TELEGRAM BOT MODE (fallback or no client) ───
             const resolved = [], notFound = [];
             for (const t of targets) {
                 const cid = resolveTelegramTarget(t);
