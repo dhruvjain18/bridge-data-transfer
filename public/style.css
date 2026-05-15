@@ -805,3 +805,148 @@ body[data-active-channel="whatsapp"] .send-btn:hover { background: #128C7E; box-
 /* Compression Badge */
 
 
+/* ==============================
+   CONTACTS PANEL
+   ============================== */
+.contacts-fab {
+    position: fixed; z-index: 200; bottom: 24px; right: 88px;
+    width: 52px; height: 52px; border-radius: 50%; border: none;
+    background: var(--surface); border: 1px solid var(--border-color);
+    box-shadow: 0 4px 20px var(--shadow);
+    color: var(--accent); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.3s ease;
+}
+.contacts-fab:hover { transform: scale(1.1); }
+.contacts-fab.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.contacts-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 300; width: 400px;
+    background: var(--bg-color); border-left: 1px solid var(--border-color);
+    box-shadow: -10px 0 40px var(--shadow); display: flex; flex-direction: column;
+    animation: slideRight 0.3s ease;
+}
+.contacts-panel.hidden { display: none; }
+.contacts-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px; border-bottom: 1px solid var(--border-color); background: var(--surface);
+}
+.contacts-header h3 { font-size: 16px; font-weight: 700; }
+.contacts-actions { display: flex; gap: 10px; align-items: center; }
+.contacts-import {
+    background: none; border: 1px solid var(--border-color); color: var(--text-secondary);
+    padding: 5px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;
+    font-family: 'Inter', sans-serif; transition: all 0.2s;
+}
+.contacts-import:hover { border-color: var(--accent); color: var(--accent); }
+.contacts-close {
+    background: none; border: none; color: var(--text-secondary);
+    cursor: pointer; font-size: 20px; transition: color 0.2s;
+}
+.contacts-close:hover { color: var(--text-primary); }
+.contacts-add {
+    padding: 14px 16px; border-bottom: 1px solid var(--border-color);
+    display: flex; flex-wrap: wrap; gap: 8px; background: var(--surface);
+}
+.contacts-add input, .contacts-add select {
+    flex: 1; min-width: 100px; padding: 10px 12px; background: var(--bg-color);
+    border: 1px solid var(--border-color); border-radius: 10px;
+    color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif;
+    outline: none; transition: all 0.2s;
+}
+.contacts-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.contacts-add select { min-width: 130px; cursor: pointer; }
+.contacts-add button {
+    padding: 10px 18px; background: var(--accent); color: white;
+    border: none; border-radius: 10px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.2s;
+    white-space: nowrap;
+}
+.contacts-add button:hover { background: var(--accent-hover); }
+.contacts-search {
+    padding: 10px 16px; border-bottom: 1px solid var(--border-color);
+}
+.contacts-search input {
+    width: 100%; padding: 10px 14px; background: var(--bg-color);
+    border: 1px solid var(--border-color); border-radius: 10px;
+    color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif;
+    outline: none; transition: all 0.2s;
+}
+.contacts-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.contacts-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.contacts-empty { text-align: center; color: var(--text-muted); font-size: 14px; padding: 40px 0; }
+.contact-group-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-muted); margin: 14px 0 8px 0; padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-color);
+}
+.contact-group-title:first-child { margin-top: 0; }
+.contact-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    background: var(--surface); border: 1px solid var(--border-color);
+    border-radius: 10px; margin-bottom: 6px; animation: fadeIn 0.2s;
+}
+.contact-item-icon {
+    width: 36px; height: 36px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-size: 16px;
+    flex-shrink: 0;
+}
+.contact-item-icon.whatsapp { background: var(--whatsapp-glow); }
+.contact-item-icon.telegram { background: var(--code-bg); }
+.contact-item-icon.email { background: rgba(250,204,21,0.1); }
+.contact-item-info { flex: 1; min-width: 0; }
+.contact-item-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.contact-item-value {
+    font-size: 11px; color: var(--text-secondary); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.contact-item-actions { display: flex; gap: 4px; }
+.contact-item-actions button {
+    background: none; border: 1px solid var(--border-color); color: var(--text-secondary);
+    padding: 4px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    font-family: 'Inter', sans-serif; transition: all 0.2s;
+}
+.contact-item-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.contact-item-actions button.delete:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Autocomplete contact name match */
+.autocomplete-item .ac-contact-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px; margin-right: 6px;
+    background: var(--code-bg); color: var(--accent); font-weight: 600;
+}
+.autocomplete-item .ac-contact-name { font-weight: 600; color: var(--text-primary); }
+.autocomplete-item .ac-contact-value { color: var(--text-muted); font-size: 12px; margin-left: 6px; }
+
+/* ==============================
+   TELEGRAM QR MODE
+   ============================== */
+.tg-qr-overlay {
+    text-align: center; padding: 24px 16px; margin-bottom: 18px;
+    border: 1px solid var(--accent); border-radius: 16px;
+    background: var(--code-bg); animation: fadeIn 0.3s;
+}
+.tg-qr-overlay.hidden { display: none; }
+.tg-qr-overlay p { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+.tg-qr-error {
+    font-size: 12px; color: var(--danger); margin-top: 12px; animation: fadeIn 0.2s;
+    padding: 8px 12px; background: rgba(239,68,68,0.1); border-radius: 8px;
+}
+.tg-qr-error.hidden { display: none; }
+
+.tg-mode-toggle {
+    display: flex; gap: 6px; margin-bottom: 14px;
+}
+.tg-mode-btn {
+    flex: 1; padding: 10px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    font-family: 'Inter', sans-serif; cursor: pointer; transition: all 0.2s;
+    border: 1px solid var(--border-color); background: var(--surface); color: var(--text-secondary);
+}
+.tg-mode-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.tg-mode-btn.active {
+    border-color: var(--accent); background: var(--code-bg); color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+@media (max-width: 480px) {
+    .contacts-panel { width: 100%; }
+    .contacts-fab { right: 82px; }
+}
