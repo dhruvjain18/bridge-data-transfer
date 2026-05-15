@@ -430,15 +430,31 @@ function setChannel(channel) {
     if (channel === 'whatsapp') {
         mainContent.classList.remove('hidden');
         initWhatsAppSession();
-        startWaPolling(); // Always restart polling to fetch latest QR/status
+        startWaPolling();
         MAX_FILE_SIZE = 100 * 1024 * 1024;
         dropZoneText.textContent = 'or click to browse · max 100 MB · up to 10 files';
+        // Hide Telegram QR if visible
+        if (tgQrOverlay) tgQrOverlay.classList.add('hidden');
+    } else if (channel === 'telegram') {
+        mainContent.classList.remove('hidden');
+        stopWaPolling();
+        // Set file size based on mode: Client (2GB) vs Bot (50MB)
+        if (tgMode === 'qr' && tgClientReady) {
+            MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB for MTProto client
+            dropZoneText.textContent = 'or click to browse · max 2 GB · up to 10 files';
+        } else {
+            MAX_FILE_SIZE = 50 * 1024 * 1024;
+            dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
+        }
+        // Restore Telegram mode UI (QR or Bot) without re-initializing
+        setTgMode(tgMode || 'bot');
     } else {
         mainContent.classList.remove('hidden');
         stopWaPolling();
-        waQrOverlay.classList.add('hidden'); // Hide overlay visually on other tabs
         MAX_FILE_SIZE = 50 * 1024 * 1024;
         dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
+        // Hide both QR overlays
+        if (tgQrOverlay) tgQrOverlay.classList.add('hidden');
     }
     renderFileList();
     updateSendButton();
@@ -872,8 +888,13 @@ sendBtn.addEventListener('click', handleSend);
 async function handleSend() {
     let target;
     if (activeChannel === 'telegram') {
-        target = chatIdInput.value.trim();
-        if (!target) { showStatus(t('status_enter_telegram'), 'error'); chatIdInput.focus(); return; }
+        if (tgMode === 'qr' && tgClientReady && tgRecipientInput) {
+            target = tgRecipientInput.value.trim();
+            if (!target) { showStatus('Enter a recipient', 'error'); tgRecipientInput.focus(); return; }
+        } else {
+            target = chatIdInput.value.trim();
+            if (!target) { showStatus(t('status_enter_telegram'), 'error'); chatIdInput.focus(); return; }
+        }
     } else if (activeChannel === 'email') {
         target = emailToInput.value.trim();
         if (!target) { showStatus(t('status_enter_email'), 'error'); emailToInput.focus(); return; }
@@ -945,6 +966,10 @@ async function handleSend() {
 
     if (activeChannel === 'whatsapp' && verifiedPhone) {
         formData.append('waSessionId', verifiedPhone);
+    }
+
+    if (activeChannel === 'telegram' && tgMode === 'qr' && tgClientReady) {
+        formData.append('tgSessionId', getTgSessionId());
     }
 
     // Handle Offline
@@ -1020,6 +1045,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     setupAutocomplete(chatIdInput, 'chatId-autocomplete', 'telegram');
     setupAutocomplete(waPhoneInput, 'waPhone-autocomplete', 'whatsapp');
     setupAutocomplete(document.getElementById('emailTo'), 'emailTo-autocomplete', 'email');
+
+    // Initialize Telegram mode on first load (page always starts on Telegram tab)
+    if (activeChannel === 'telegram') {
+        // Wait for config check to complete first
+        await checkTgClientConfig();
+        setTgMode(tgMode || 'bot');
+    }
 });
 
 // ==============================
@@ -1638,62 +1670,169 @@ if ('serviceWorker' in navigator && window.location.search.includes('share_title
 // ==============================
 // CONTACTS AUTOCOMPLETE
 // ==============================
+// PHONEBOOK (localStorage)
+// ==============================
+function getPhonebook() {
+    return JSON.parse(localStorage.getItem('bridge_phonebook') || '[]');
+}
+function savePhonebook(contacts) {
+    localStorage.setItem('bridge_phonebook', JSON.stringify(contacts));
+}
+function addPhonebookContact(name, value, channel) {
+    const pb = getPhonebook();
+    const exists = pb.find(c => c.name.toLowerCase() === name.toLowerCase() && c.channel === channel);
+    if (exists) { exists.value = value; } else { pb.push({ name, value, channel }); }
+    savePhonebook(pb);
+}
+function deletePhonebookContact(name, channel) {
+    savePhonebook(getPhonebook().filter(c => !(c.name.toLowerCase() === name.toLowerCase() && c.channel === channel)));
+}
+
 function saveContact(channel, rawTarget) {
     const key = `bridge_contacts_${channel}`;
     let contacts = JSON.parse(localStorage.getItem(key) || '[]');
     const newContacts = rawTarget.split(',').map(t => t.trim()).filter(Boolean);
-    
     let added = false;
     for (const c of newContacts) {
-        if (!contacts.includes(c)) {
-            contacts.push(c);
-            added = true;
-        }
+        if (!contacts.includes(c)) { contacts.push(c); added = true; }
     }
-    if (added) {
-        localStorage.setItem(key, JSON.stringify(contacts));
-    }
+    if (added) localStorage.setItem(key, JSON.stringify(contacts));
 }
 
+// ==============================
+// CONTACTS PANEL
+// ==============================
+const contactsPanel = document.getElementById('contacts-panel');
+const contactsFab = document.getElementById('contacts-fab');
+const contactsClose = document.getElementById('contacts-close');
+const contactsBody = document.getElementById('contacts-body');
+const contactsImport = document.getElementById('contacts-import');
+const contactsSearchInput = document.getElementById('contacts-search-input');
+const contactNameInput = document.getElementById('contact-name');
+const contactValueInput = document.getElementById('contact-value');
+const contactChannelSelect = document.getElementById('contact-channel');
+const contactsAddBtn = document.getElementById('contacts-add-btn');
+
+if (contactsFab) contactsFab.addEventListener('click', () => {
+    contactsPanel.classList.toggle('hidden');
+    contactsFab.classList.toggle('active');
+    renderContactsPanel();
+});
+if (contactsClose) contactsClose.addEventListener('click', () => {
+    contactsPanel.classList.add('hidden');
+    contactsFab.classList.remove('active');
+});
+if (contactsAddBtn) contactsAddBtn.addEventListener('click', () => {
+    const name = contactNameInput.value.trim();
+    const value = contactValueInput.value.trim();
+    const channel = contactChannelSelect.value;
+    if (!name || !value) return;
+    addPhonebookContact(name, value, channel);
+    contactNameInput.value = '';
+    contactValueInput.value = '';
+    renderContactsPanel();
+});
+if (contactsImport) contactsImport.addEventListener('click', () => {
+    let imported = 0;
+    ['telegram', 'whatsapp', 'email'].forEach(ch => {
+        const old = JSON.parse(localStorage.getItem(`bridge_contacts_${ch}`) || '[]');
+        old.forEach(val => {
+            const pb = getPhonebook();
+            if (!pb.find(c => c.value === val && c.channel === ch)) {
+                addPhonebookContact(val, val, ch);
+                imported++;
+            }
+        });
+    });
+    renderContactsPanel();
+    if (typeof showTopToast === 'function') showTopToast(`📥 Imported ${imported} contact(s) from history`, 'success');
+});
+if (contactsSearchInput) contactsSearchInput.addEventListener('input', () => renderContactsPanel());
+
+function renderContactsPanel() {
+    const pb = getPhonebook();
+    const q = (contactsSearchInput?.value || '').toLowerCase();
+    const filtered = q ? pb.filter(c => c.name.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)) : pb;
+    if (filtered.length === 0) {
+        contactsBody.innerHTML = '<p class="contacts-empty">No contacts saved yet.</p>';
+        return;
+    }
+    const grouped = { whatsapp: [], telegram: [], email: [] };
+    filtered.forEach(c => { if (grouped[c.channel]) grouped[c.channel].push(c); });
+    const icons = { whatsapp: '💬', telegram: '📱', email: '📧' };
+    const labels = { whatsapp: 'WhatsApp', telegram: 'Telegram', email: 'Email' };
+    let html = '';
+    for (const [ch, contacts] of Object.entries(grouped)) {
+        if (contacts.length === 0) continue;
+        html += `<div class="contact-group-title">${icons[ch]} ${labels[ch]}</div>`;
+        contacts.forEach(c => {
+            html += `<div class="contact-item">
+                <div class="contact-item-icon ${ch}">${icons[ch]}</div>
+                <div class="contact-item-info">
+                    <div class="contact-item-name">${escapeHTML(c.name)}</div>
+                    <div class="contact-item-value">${escapeHTML(c.value)}</div>
+                </div>
+                <div class="contact-item-actions">
+                    <button class="delete" onclick="deletePhonebookContact('${escapeHTML(c.name)}','${ch}');renderContactsPanel()">✕</button>
+                </div>
+            </div>`;
+        });
+    }
+    contactsBody.innerHTML = html;
+}
+
+// ==============================
+// ENHANCED AUTOCOMPLETE (name + value search)
+// ==============================
 function setupAutocomplete(inputEl, dropdownId, channelKey) {
     const dropdown = document.getElementById(dropdownId);
     if (!inputEl || !dropdown) return;
 
     document.addEventListener('click', (e) => {
-        if (!inputEl.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.classList.add('hidden');
-        }
+        if (!inputEl.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.add('hidden');
     });
 
     inputEl.addEventListener('input', () => {
         const val = inputEl.value;
         const parts = val.split(',');
-        const lastPart = parts[parts.length - 1].trimLeft(); 
+        const lastPart = parts[parts.length - 1].trimLeft();
         const query = lastPart.trim().toLowerCase();
+        if (query.length < 1) { dropdown.classList.add('hidden'); return; }
 
-        if (query.length < 1) {
-            dropdown.classList.add('hidden');
-            return;
-        }
+        const items = [];
 
-        const contacts = JSON.parse(localStorage.getItem(`bridge_contacts_${channelKey}`) || '[]');
-        const matches = contacts.filter(c => c.toLowerCase().includes(query) && c.toLowerCase() !== query);
+        // 1) Phonebook contacts (name-based search)
+        const pb = getPhonebook().filter(c => c.channel === channelKey);
+        pb.forEach(c => {
+            if (c.name.toLowerCase().includes(query) || c.value.toLowerCase().includes(query)) {
+                items.push({ type: 'phonebook', name: c.name, value: c.value });
+            }
+        });
 
-        if (matches.length > 0) {
+        // 2) History-based contacts (value-only)
+        const history = JSON.parse(localStorage.getItem(`bridge_contacts_${channelKey}`) || '[]');
+        history.forEach(h => {
+            if (h.toLowerCase().includes(query) && !items.find(i => i.value === h)) {
+                items.push({ type: 'history', name: '', value: h });
+            }
+        });
+
+        if (items.length > 0) {
             dropdown.innerHTML = '';
-            matches.forEach(match => {
+            items.slice(0, 10).forEach(item => {
                 const li = document.createElement('li');
                 li.className = 'autocomplete-item';
-                
-                const idx = match.toLowerCase().indexOf(query);
-                const before = match.substring(0, idx);
-                const matchedText = match.substring(idx, idx + query.length);
-                const after = match.substring(idx + query.length);
-                
-                li.innerHTML = `<span>${before}<strong>${matchedText}</strong>${after}</span>`;
-                
+                if (item.type === 'phonebook') {
+                    li.innerHTML = `<span class="ac-contact-badge">📇</span><span class="ac-contact-name">${escapeHTML(item.name)}</span><span class="ac-contact-value">— ${escapeHTML(item.value)}</span>`;
+                } else {
+                    const idx = item.value.toLowerCase().indexOf(query);
+                    const before = item.value.substring(0, idx);
+                    const matched = item.value.substring(idx, idx + query.length);
+                    const after = item.value.substring(idx + query.length);
+                    li.innerHTML = `<span>${before}<strong>${matched}</strong>${after}</span>`;
+                }
                 li.addEventListener('click', () => {
-                    parts[parts.length - 1] = (parts.length > 1 ? ' ' : '') + match;
+                    parts[parts.length - 1] = (parts.length > 1 ? ' ' : '') + item.value;
                     inputEl.value = parts.join(',') + (channelKey !== 'telegram' ? ', ' : '');
                     dropdown.classList.add('hidden');
                     inputEl.focus();
@@ -1706,3 +1845,126 @@ function setupAutocomplete(inputEl, dropdownId, channelKey) {
         }
     });
 }
+
+// ==============================
+// TELEGRAM QR MODE
+// ==============================
+let tgMode = localStorage.getItem('bridge_tg_mode') || 'bot';
+let tgClientReady = false;
+let tgClientAvailable = false;
+const tgQrOverlay = document.getElementById('tg-qr-overlay');
+const tgQrImage = document.getElementById('tg-qr-image');
+const tgQrLoading = document.getElementById('tg-qr-loading');
+const tgQrError = document.getElementById('tg-qr-error');
+const tgModeToggle = document.getElementById('tg-mode-toggle');
+const tgBotInput = document.getElementById('tg-bot-input');
+const tgQrInput = document.getElementById('tg-qr-input');
+const tgModeQrBtn = document.getElementById('tg-mode-qr');
+const tgModeBotBtn = document.getElementById('tg-mode-bot');
+const tgRecipientInput = document.getElementById('tgRecipient');
+
+// Check if Telegram MTProto client is available on server
+async function checkTgClientConfig() {
+    try {
+        const res = await fetch('/api/telegram/config');
+        const data = await res.json();
+        tgClientAvailable = data.tgClientAvailable;
+        if (!tgClientAvailable && tgModeToggle) tgModeToggle.style.display = 'none';
+    } catch (e) { tgClientAvailable = false; }
+}
+// Don't auto-call here — called from DOMContentLoaded instead
+
+function setTgMode(mode) {
+    tgMode = mode;
+    localStorage.setItem('bridge_tg_mode', mode);
+    if (tgModeQrBtn) tgModeQrBtn.classList.toggle('active', mode === 'qr');
+    if (tgModeBotBtn) tgModeBotBtn.classList.toggle('active', mode === 'bot');
+    if (tgBotInput) tgBotInput.classList.toggle('hidden', mode === 'qr' && tgClientAvailable);
+    if (tgQrInput) tgQrInput.classList.toggle('hidden', mode !== 'qr' || !tgClientAvailable || !tgClientReady);
+    if (tgQrOverlay) {
+        if (mode === 'qr' && tgClientAvailable && !tgClientReady) {
+            tgQrOverlay.classList.remove('hidden');
+            // Only init once — don't re-create session on every tab switch
+            if (!tgSessionInitialized) {
+                initTelegramSession();
+            }
+        } else if (mode === 'qr' && tgClientReady) {
+            tgQrOverlay.classList.add('hidden');
+            if (tgQrInput) tgQrInput.classList.remove('hidden');
+        } else {
+            tgQrOverlay.classList.add('hidden');
+        }
+    }
+}
+
+if (tgModeQrBtn) tgModeQrBtn.addEventListener('click', () => setTgMode('qr'));
+if (tgModeBotBtn) tgModeBotBtn.addEventListener('click', () => setTgMode('bot'));
+
+function getTgSessionId() {
+    let sid = localStorage.getItem('bridge_tg_session_id');
+    if (!sid) { sid = 'tg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('bridge_tg_session_id', sid); }
+    return sid;
+}
+
+let tgSessionInitialized = false;
+
+async function initTelegramSession() {
+    if (tgSessionInitialized) return; // Already initialized
+    tgSessionInitialized = true;
+    const sid = getTgSessionId();
+    socket.emit('join_tg_session', sid);
+    try {
+        const res = await fetch('/api/telegram/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) });
+        const data = await res.json();
+        if (!data.tgClientAvailable) { tgClientAvailable = false; tgSessionInitialized = false; if (tgModeToggle) tgModeToggle.style.display = 'none'; setTgMode('bot'); return; }
+        pollTgStatus();
+    } catch (e) { console.error('TG session init error:', e); tgSessionInitialized = false; }
+}
+
+async function pollTgStatus() {
+    const sid = getTgSessionId();
+    try {
+        const res = await fetch(`/api/telegram/status?sessionId=${sid}`);
+        const data = await res.json();
+        handleTgStatus(data);
+    } catch (e) { console.error('TG status poll error:', e); }
+}
+
+function handleTgStatus(data) {
+    if (data.ready) {
+        tgClientReady = true;
+        if (tgQrOverlay) tgQrOverlay.classList.add('hidden');
+        if (tgQrInput) tgQrInput.classList.remove('hidden');
+        if (tgBotInput) tgBotInput.classList.add('hidden');
+        // Upgrade file size limit to 2GB for MTProto client
+        if (activeChannel === 'telegram') {
+            MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
+            dropZoneText.textContent = 'or click to browse · max 2 GB · up to 10 files';
+        }
+        if (typeof showTopToast === 'function') showTopToast('✅ Telegram connected — send files up to 2 GB!', 'success');
+        fetchTelegramContacts();
+    } else if (data.qr) {
+        if (tgQrImage) { tgQrImage.src = data.qr; tgQrImage.classList.remove('hidden'); }
+        if (tgQrLoading) tgQrLoading.style.display = 'none';
+        if (tgQrError) tgQrError.classList.add('hidden');
+    } else if (data.error) {
+        if (tgQrError) { tgQrError.textContent = data.error; tgQrError.classList.remove('hidden'); }
+    }
+}
+
+socket.on('tg_status_update', (data) => { handleTgStatus(data); });
+
+async function fetchTelegramContacts() {
+    const sid = getTgSessionId();
+    try {
+        const res = await fetch(`/api/telegram/contacts?sessionId=${sid}`);
+        const data = await res.json();
+        if (data.contacts && data.contacts.length > 0) {
+            data.contacts.forEach(c => { addPhonebookContact(c.name, c.value, 'telegram'); });
+            renderContactsPanel();
+        }
+    } catch (e) { console.error('Failed to fetch TG contacts:', e); }
+}
+
+// Setup autocomplete for tgRecipient
+if (tgRecipientInput) setupAutocomplete(tgRecipientInput, 'tgRecipient-autocomplete', 'telegram');
