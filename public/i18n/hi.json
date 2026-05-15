@@ -103,5 +103,7 @@
   "wa_pairing_qr_btn": "📷 इसके बजाय QR कोड दिखाएं",
   "wa_pairing_info": "पेयरिंग कोड प्राप्त करने के लिए देश कोड के साथ अपना फ़ोन नंबर दर्ज करें",
   "wa_pairing_get_code": "कोड प्राप्त करें",
-  "btn_zip_selected": "🤐 चुनी हुई फ़ाइलें ज़िप करें"
+  "btn_zip_selected": "🤐 चुनी हुई फ़ाइलें ज़िप करें",
+  "contacts_title": "📇 संपर्क",
+  "placeholder_telegram": "नाम या @username टाइप करें"
 }
