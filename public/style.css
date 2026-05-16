@@ -465,7 +465,10 @@ header p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
 .schedule-toggle.active { border-color: var(--accent); color: var(--accent); background: var(--code-bg); }
 .schedule-picker { display: flex; gap: 8px; margin-top: 10px; animation: fadeIn 0.2s; }
 .schedule-picker.hidden { display: none; }
-.schedule-input { flex: 1; padding: 10px 14px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; outline: none; }
+.schedule-input { flex: 1; padding: 10px 14px; background: #a5c5f7; border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; outline: none; color-scheme: dark; }
+.schedule-input::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.7; transition: opacity 0.2s; }
+html[data-theme="dark"] .schedule-input::-webkit-calendar-picker-indicator { filter: invert(1) hue-rotate(180deg); }
+.schedule-input::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 .schedule-cancel { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 8px 14px; border-radius: 10px; font-size: 12px; cursor: pointer; font-family: 'Inter', sans-serif; }
 .schedule-cancel:hover { border-color: var(--danger); color: var(--danger); }
 
