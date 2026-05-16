@@ -232,12 +232,14 @@
                         </div>
                         <p class="wa-qr-hint">One-time scan per browser. Your session is saved and will auto-reconnect.</p>
                         <div class="tg-qr-error hidden" id="tg-qr-error"></div>
-                    </div>
-                    <div class="tg-mode-toggle" id="tg-mode-toggle">
-                        <button class="tg-mode-btn active" id="tg-mode-qr" data-mode="qr">📷 Scan QR</button>
-                        <button class="tg-mode-btn" id="tg-mode-bot" data-mode="bot">🤖 Use Bot</button>
+                        <div class="tg-pairing-toggle" id="tg-mode-toggle" style="margin-top: 14px; text-align: center;">
+                            <button id="tg-pairing-link" class="wa-pairing-btn">🤖 Can't scan? Use Bot</button>
+                        </div>
                     </div>
                     <div id="tg-bot-input">
+                        <div class="tg-pairing-toggle" id="tg-mode-toggle-back" style="margin-bottom: 14px; text-align: center;">
+                            <button id="tg-pairing-link-back" class="wa-pairing-btn">📷 Want to scan? Use QR Code</button>
+                        </div>
                         <label for="chatId" data-i18n="label_telegram_username">Telegram Username</label>
                         <div class="autocomplete-wrapper">
                             <input type="text" id="chatId" placeholder="Type a name or @username" autocomplete="off" data-i18n-placeholder="placeholder_telegram">
