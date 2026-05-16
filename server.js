@@ -232,6 +232,8 @@ async function executeJobNow(job) {
 function reScheduleJob(job, delayMs) {
     scheduledJobs.push({
         id: job.id, targets: job.targets, fileCount: job.files.length, scheduledFor: job.scheduledFor,
+        channel: job.channel || 'telegram', cyclePeriod: job.cyclePeriod || 'none',
+        messagePreview: (job.textMessage || '').substring(0, 60),
         timer: setTimeout(async () => {
             await executeJobNow(job);
             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === job.id), 1);
@@ -1438,7 +1440,11 @@ app.get('/api/contacts/search', (req, res) => {
 });
 
 app.get('/api/scheduled', (req, res) => {
-    res.json(scheduledJobs.map(j => ({ id: j.id, targets: j.targets, fileCount: j.fileCount, scheduledFor: j.scheduledFor })));
+    res.json(scheduledJobs.map(j => ({
+        id: j.id, targets: j.targets, fileCount: j.fileCount, scheduledFor: j.scheduledFor,
+        channel: j.channel || 'telegram', cyclePeriod: j.cyclePeriod || 'none',
+        messagePreview: j.messagePreview || ''
+    })));
 });
 
 app.get('/api/health', (req, res) => {
@@ -1739,9 +1745,18 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
         if (textMessage.length > MAX_MESSAGE_LENGTH) { cleanupFiles(files); return res.status(400).json({ error: `Message too long. Max ${MAX_MESSAGE_LENGTH} chars.` }); }
         if (files.length === 0 && !textMessage.trim()) return res.status(400).json({ error: 'Provide a file or message.' });
 
-        const MAX_SIZE = channel === 'telegram' ? 50 * 1024 * 1024 : 100 * 1024 * 1024;
+        let MAX_SIZE;
+        if (channel === 'telegram') {
+            const tgSid = req.body.tgSessionId || '';
+            const tgSess = tgSid ? tgActiveSessions.get(tgSid) : null;
+            const hasTgClient = tgSess && tgSess.ready && tgSess.client;
+            MAX_SIZE = hasTgClient ? 2 * 1024 * 1024 * 1024 : 50 * 1024 * 1024; // 2GB for MTProto, 50MB for Bot
+        } else {
+            MAX_SIZE = 100 * 1024 * 1024;
+        }
+        const sizeLabel = MAX_SIZE >= 1024 * 1024 * 1024 ? `${MAX_SIZE / (1024 * 1024 * 1024)}GB` : `${MAX_SIZE / (1024 * 1024)}MB`;
         const oversized = files.filter(f => f.size > MAX_SIZE);
-        if (oversized.length > 0) { cleanupFiles(files); return res.status(400).json({ error: `${oversized.length} file(s) exceed ${channel === 'telegram' ? '50MB' : '100MB'}.` }); }
+        if (oversized.length > 0) { cleanupFiles(files); return res.status(400).json({ error: `${oversized.length} file(s) exceed ${sizeLabel}.` }); }
 
         log('INFO', 'Upload request', { channel, targets: targets.length, files: files.length, ip: requestIP });
 
@@ -1807,6 +1822,8 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
 
                     scheduledJobs.push({
                         id: jobId, targets: jobData.targets, fileCount: files.length, scheduledFor: jobData.scheduledFor,
+                        channel: 'telegram', cyclePeriod: cyclePeriod || 'none',
+                        messagePreview: (textMessage || '').substring(0, 60),
                         timer: setTimeout(async () => {
                             for (const t of resolved) await sendTelegram(t.chatId, textMessage, files, selfDestruct);
                             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
@@ -1898,6 +1915,8 @@ app.post('/api/upload', uploadLimiter, upload.array('files', 10), async (req, re
                     if (!jobId) jobId = Date.now().toString(36);
                     scheduledJobs.push({
                         id: jobId, targets: resolved.map(r => r.label), fileCount: files.length, scheduledFor: new Date(currentScheduledTime).toISOString(),
+                        channel: 'whatsapp', cyclePeriod: cyclePeriod || 'none',
+                        messagePreview: (textMessage || '').substring(0, 60),
                         timer: setTimeout(async () => {
                             for (const t of resolved) await sendWhatsApp(sessionPhone, t.chatId, textMessage, files, selfDestruct);
                             scheduledJobs.splice(scheduledJobs.findIndex(j => j.id === jobId), 1);
