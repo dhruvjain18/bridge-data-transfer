@@ -673,12 +673,48 @@ function renderHistoryItem(item) {
     return `<div class="history-item"><div class="history-item-header"><span class="history-item-to">${escapeHTML(item.to)}</span><span class="history-item-time">${escapeHTML(item.scheduledTime ? new Date(item.scheduledTime).toLocaleString() : item.time)}</span></div><div class="history-item-files">${item.message ? `<span>💬 ${escapeHTML(item.message.substring(0, 60))}</span>` : ''}${files}</div><span class="history-item-channel ${ch}">${chLabel}</span>${cycleBadge}${statusHtml}</div>`;
 }
 
-function renderHistory() {
-    const history = getHistory();
-    if (!history.length) { historyBody.innerHTML = '<p class="history-empty">No transfers yet.</p>'; return; }
+// Convert a server-side scheduled job to a history item for rendering
+function serverJobToHistoryItem(job) {
+    return {
+        to: (job.targets || []).join(', '),
+        files: job.fileCount > 0 ? [`${job.fileCount} file(s)`] : [],
+        message: job.messagePreview || '',
+        time: new Date(job.scheduledFor).toLocaleString(),
+        scheduled: true,
+        channel: job.channel || 'telegram',
+        jobId: job.id,
+        scheduledTime: job.scheduledFor,
+        cyclePeriod: job.cyclePeriod || 'none',
+        canceled: false,
+        _fromServer: true
+    };
+}
+
+async function renderHistory() {
+    const localHistory = getHistory();
+
+    // For the scheduled tab, fetch server-side jobs and merge
+    let mergedHistory = [...localHistory];
+    if (activeHistoryTab === 'scheduled') {
+        try {
+            const res = await fetch('/api/scheduled');
+            if (res.ok) {
+                const serverJobs = await res.json();
+                const localJobIds = new Set(localHistory.filter(i => i.jobId).map(i => i.jobId));
+                // Add server jobs that aren't already in local history
+                for (const sj of serverJobs) {
+                    if (!localJobIds.has(sj.id)) {
+                        mergedHistory.push(serverJobToHistoryItem(sj));
+                    }
+                }
+            }
+        } catch (e) { console.warn('Failed to fetch server scheduled jobs:', e); }
+    }
+
+    if (!mergedHistory.length) { historyBody.innerHTML = '<p class="history-empty">No transfers yet.</p>'; return; }
 
     // Apply channel filter
-    const filtered = activeHistoryFilter === 'all' ? history : history.filter(i => (i.channel || 'telegram') === activeHistoryFilter);
+    const filtered = activeHistoryFilter === 'all' ? mergedHistory : mergedHistory.filter(i => (i.channel || 'telegram') === activeHistoryFilter);
 
     let html = '';
     if (activeHistoryTab === 'messages') {
