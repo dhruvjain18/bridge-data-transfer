@@ -438,16 +438,8 @@ function setChannel(channel) {
     } else if (channel === 'telegram') {
         mainContent.classList.remove('hidden');
         stopWaPolling();
-        // Set file size based on mode: Client (2GB) vs Bot (50MB)
-        if (tgMode === 'qr' && tgClientReady) {
-            MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB for MTProto client
-            dropZoneText.textContent = 'or click to browse · max 2 GB · up to 10 files';
-        } else {
-            MAX_FILE_SIZE = 50 * 1024 * 1024;
-            dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
-        }
         // Restore Telegram mode UI (QR or Bot) without re-initializing
-        setTgMode(tgMode || 'bot');
+        setTgMode(tgMode || 'qr');
     } else {
         mainContent.classList.remove('hidden');
         stopWaPolling();
@@ -1885,7 +1877,7 @@ function setupAutocomplete(inputEl, dropdownId, channelKey) {
 // ==============================
 // TELEGRAM QR MODE
 // ==============================
-let tgMode = localStorage.getItem('bridge_tg_mode') || 'bot';
+let tgMode = 'qr';
 let tgClientReady = false;
 let tgClientAvailable = false;
 const tgQrOverlay = document.getElementById('tg-qr-overlay');
@@ -1910,11 +1902,23 @@ async function checkTgClientConfig() {
 }
 // Don't auto-call here — called from DOMContentLoaded instead
 
+const tgPairingLink = document.getElementById('tg-pairing-link');
+const tgPairingLinkBack = document.getElementById('tg-pairing-link-back');
+
 function setTgMode(mode) {
     tgMode = mode;
-    localStorage.setItem('bridge_tg_mode', mode);
-    if (tgModeQrBtn) tgModeQrBtn.classList.toggle('active', mode === 'qr');
-    if (tgModeBotBtn) tgModeBotBtn.classList.toggle('active', mode === 'bot');
+    
+    
+    if (activeChannel === 'telegram') {
+        if (mode === 'qr') {
+            MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB for MTProto client
+            dropZoneText.textContent = 'or click to browse · max 2 GB · up to 10 files';
+        } else {
+            MAX_FILE_SIZE = 50 * 1024 * 1024;
+            dropZoneText.textContent = 'or click to browse · max 50 MB · up to 10 files';
+        }
+    }
+
     if (tgBotInput) tgBotInput.classList.toggle('hidden', mode === 'qr' && tgClientAvailable);
     if (tgQrInput) tgQrInput.classList.toggle('hidden', mode !== 'qr' || !tgClientAvailable || !tgClientReady);
     if (tgQrOverlay) {
@@ -1933,8 +1937,12 @@ function setTgMode(mode) {
     }
 }
 
-if (tgModeQrBtn) tgModeQrBtn.addEventListener('click', () => setTgMode('qr'));
-if (tgModeBotBtn) tgModeBotBtn.addEventListener('click', () => setTgMode('bot'));
+if (tgPairingLink) {
+    tgPairingLink.addEventListener('click', () => setTgMode('bot'));
+}
+if (tgPairingLinkBack) {
+    tgPairingLinkBack.addEventListener('click', () => setTgMode('qr'));
+}
 
 function getTgSessionId() {
     let sid = localStorage.getItem('bridge_tg_session_id');
